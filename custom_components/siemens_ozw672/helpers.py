@@ -1,0 +1,223 @@
+"""Shared helpers for the Siemens OZW672 integration.
+
+The five entity platforms used to carry an identical, copy-pasted 25-line setup
+loop. Keeping that logic here means a fix (or a new field such as the polling
+priority) has to be made once instead of five times.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
+
+from .const import (
+    CONF_DATAPOINTS,
+    CONF_DEVICE,
+    CONF_DEVICE_LONGNAME,
+    CONF_PREFIX_FUNCTION,
+    CONF_PREFIX_OPLINE,
+    CONF_USE_DEVICE_LONGNAME,
+    DEFAULT_PREFIX_FUNCTION,
+    DEFAULT_PREFIX_OPLINE,
+    DEFAULT_USE_DEVICE_LONGNAME,
+)
+
+_LOGGER: logging.Logger = logging.getLogger(__package__)
+
+
+def parse_numeric(raw: Any) -> float | None:
+    """Parse a numeric reading from the OZW672, or None if it carries no value.
+
+    The device pads values ("       19.8") and reports a run of dashes ("---")
+    when a datapoint has no reading. Returning None makes the entity unknown
+    rather than inventing a number, which would otherwise be recorded as a real
+    measurement in long-term statistics.
+
+    Note this deliberately does not use str.isnumeric(): that returns False for
+    "19.8" (the decimal point disqualifies it) and for "-3", which is how
+    decimals ended up truncated and sub-1.0 values read as zero.
+    """
+    text = clean_value(raw)
+    if text is None:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def clean_value(raw: Any) -> str | None:
+    """Strip the device's padding, or return None for its no-data sentinel.
+
+    The OZW672 reports a run of dashes ("--", "----") for a datapoint it has no
+    reading for. api.py used to rewrite that to "0" before it ever reached an
+    entity, so a missing reading was recorded as a real zero.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or set(text) == {"-"}:
+        return None
+    return text
+
+
+def decimal_digits(config_entry: dict) -> int | None:
+    """Display precision from the datapoint description, or None if absent.
+
+    Not every datapoint returns DecimalDigits, so this must not subscript it
+    directly - doing so raised KeyError inside the state machinery and silently
+    froze the affected entities.
+    """
+    return descr_int(config_entry, "DecimalDigits")
+
+
+def descr_float(config_entry: dict, key: str, default: float | None = None) -> float | None:
+    """Read a float out of DPDescr, falling back when it is missing or unparseable.
+
+    Min/Max/Resolution are absent for datapoints whose description was never
+    fetched, so subscripting them raises KeyError inside the entity properties.
+    """
+    raw = (config_entry.get("DPDescr") or {}).get(key)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def descr_int(config_entry: dict, key: str, default: int | None = None) -> int | None:
+    """Read an int out of DPDescr, falling back when it is missing or unparseable."""
+    raw = (config_entry.get("DPDescr") or {}).get(key)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def entry_flag(entry: ConfigEntry, key: str, default: bool) -> bool:
+    """Read a boolean setting, preferring options over the copy held in data.
+
+    The config flow writes the naming flags into both entry.data and
+    entry.options. Reading options first means a future options screen can change
+    them without the stale copy in data winning.
+    """
+    if key in entry.options:
+        return bool(entry.options[key])
+    if key in entry.data:
+        return bool(entry.data[key])
+    return default
+
+
+def option_int(
+    entry: ConfigEntry, key: str, default: int, minimum: int, maximum: int
+) -> int:
+    """Read a numeric option, clamped into a range that cannot break the poller.
+
+    Stored options are not re-validated when the schema changes, and entries
+    written before the options dialog validated its input can hold anything - a
+    scan interval of 0 turned the coordinator into a tight polling loop.
+    """
+    raw = entry.options.get(key)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        _LOGGER.warning(
+            "Option %s has the unusable value %r; falling back to %s", key, raw, default
+        )
+        return default
+    clamped = max(minimum, min(maximum, value))
+    if clamped != value:
+        _LOGGER.warning(
+            "Option %s is set to %s, which is outside the supported range "
+            "%s-%s; using %s instead",
+            key, value, minimum, maximum, clamped,
+        )
+    return clamped
+
+
+def device_name(entry: ConfigEntry) -> str:
+    """Return the device name the user picked (short name or Addr+Type)."""
+    if entry_flag(entry, CONF_USE_DEVICE_LONGNAME, DEFAULT_USE_DEVICE_LONGNAME):
+        return entry.data.get(CONF_DEVICE_LONGNAME) or entry.data.get(CONF_DEVICE, "")
+    return entry.data.get(CONF_DEVICE, "")
+
+
+def device_model(entry: ConfigEntry) -> str | None:
+    """Best guess at the controller model, e.g. "RVS43.345/109".
+
+    CONF_DEVICE_LONGNAME holds the LPB/BSB address and the type ("0.1 RVS43.345/109");
+    the model is the part after the address.
+    """
+    longname = entry.data.get(CONF_DEVICE_LONGNAME)
+    if not longname:
+        return None
+    parts = str(longname).split(" ", 1)
+    return parts[1] if len(parts) == 2 else str(longname)
+
+
+def platform_enabled(entry: ConfigEntry, platform: str) -> bool:
+    """Whether the user left this entity domain switched on in the options.
+
+    These five toggles were shown in the options dialog but never read anywhere,
+    so switching a domain off did nothing.
+    """
+    return entry.options.get(platform, True) is not False
+
+
+def datapoint_identifier(datapoint: dict) -> str:
+    """Stable per-datapoint suffix for the entity unique_id.
+
+    Prefers the operating line number from the manual, because the API's own
+    datapoint Id changes whenever the OZW672 regenerates its menu tree. Falls
+    back to the API Id when there is no usable operating line.
+    """
+    try:
+        opline = int(datapoint.get("OpLine"))
+    except (TypeError, ValueError):
+        opline = 0
+    if opline > 1:
+        return str(datapoint["OpLine"])
+    return "00" + str(datapoint.get("Id", ""))
+
+
+def build_dp_configs(entry: ConfigEntry) -> list[dict]:
+    """Return the runtime config for every configured datapoint.
+
+    Each entry is a *copy*. The platforms used to write their runtime keys
+    (entry_id, device_id, device_name, entity_prefix) straight back into the
+    dicts inside entry.data["datapoints"], so setting up an entity mutated - and
+    eventually persisted - the stored config entry as a side effect.
+    """
+    prefix_function = entry_flag(entry, CONF_PREFIX_FUNCTION, DEFAULT_PREFIX_FUNCTION)
+    prefix_opline = entry_flag(entry, CONF_PREFIX_OPLINE, DEFAULT_PREFIX_OPLINE)
+    name = device_name(entry)
+    model = device_model(entry)
+
+    configs: list[dict] = []
+    for datapoint in entry.data.get(CONF_DATAPOINTS) or []:
+        dp_config = dict(datapoint)
+        dp_config["entry_id"] = f"{entry.entry_id}_{datapoint_identifier(datapoint)}"
+        dp_config["device_id"] = entry.entry_id
+        dp_config["device_name"] = name
+        dp_config["device_model"] = model
+
+        prefix = ""
+        if prefix_function:
+            prefix = f'{datapoint.get("MenuItem", "")} - '
+        if prefix_opline:
+            prefix = f'{prefix}{datapoint.get("OpLine", "")} '
+        dp_config["entity_prefix"] = prefix
+
+        configs.append(dp_config)
+    return configs
+
+
+def dp_configs_for_hatype(entry: ConfigEntry, hatype: str) -> list[dict]:
+    """Runtime configs for the datapoints this platform is responsible for."""
+    return [
+        dp_config
+        for dp_config in build_dp_configs(entry)
+        if (dp_config.get("DPDescr") or {}).get("HAType") == hatype
+    ]

@@ -7,42 +7,42 @@ import logging
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.helpers.update_coordinator import UpdateFailed
-from homeassistant.helpers import device_registry
-from homeassistant.helpers import entity_registry
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import SiemensOzw672ApiClient
-from .const import CONF_HOST
-from .const import CONF_DEVICE
-from .const import CONF_DEVICE_LONGNAME
-from .const import CONF_DEVICE_ID
-from .const import CONF_PROTOCOL
-from .const import CONF_PASSWORD
-from .const import CONF_USERNAME
+from .api import SiemensOzw672ApiClient, SiemensOzw672ApiError
 from .const import CONF_DATAPOINTS
-from .const import CONF_SCANINTERVAL
-from .const import CONF_HTTPTIMEOUT
+from .const import CONF_DEVICE
+from .const import CONF_DEVICE_ID
+from .const import CONF_DEVICE_LONGNAME
+from .const import CONF_HOST
 from .const import CONF_HTTPRETRIES
+from .const import CONF_HTTPTIMEOUT
+from .const import CONF_MINOR_VERSION
+from .const import CONF_PASSWORD
+from .const import CONF_PROTOCOL
+from .const import CONF_SCANINTERVAL
+from .const import CONF_USERNAME
+from .const import CONF_USE_DEVICE_LONGNAME
+from .const import CONF_VERIFY_SSL
+from .const import CONF_VERSION
+from .const import DEFAULT_HTTPRETRIES
+from .const import DEFAULT_HTTPTIMEOUT
+from .const import DEFAULT_OPTIONS
+from .const import DEFAULT_SCANINTERVAL
+from .const import DEFAULT_VERIFY_SSL
 from .const import DOMAIN
-from .const import NAME
-from .const import VERSION
+from .const import MAX_HTTPRETRIES
+from .const import MAX_HTTPTIMEOUT
+from .const import MAX_SCANINTERVAL
+from .const import MIN_HTTPRETRIES
+from .const import MIN_HTTPTIMEOUT
+from .const import MIN_SCANINTERVAL
 from .const import PLATFORMS
 from .const import STARTUP_MESSAGE
-from .const import DEFAULT_HTTPTIMEOUT
-from .const import DEFAULT_HTTPRETRIES
-from .const import DEFAULT_SCANINTERVAL
-from .const import DEFAULT_OPTIONS
-from .const import CONF_VERSION
-from .const import CONF_MINOR_VERSION
-from .const import CONF_USE_DEVICE_LONGNAME
-
-
-#SCAN_INTERVAL = timedelta(seconds=60)
+from .helpers import option_int
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -90,71 +90,79 @@ def _async_repair_string_entry_versions(hass: HomeAssistant) -> None:
         )
 
 
+def _build_client(hass: HomeAssistant, entry: ConfigEntry) -> SiemensOzw672ApiClient:
+    """Create an API client configured from the entry's data and options."""
+    conf_httptimeout = option_int(
+        entry, CONF_HTTPTIMEOUT, DEFAULT_HTTPTIMEOUT, MIN_HTTPTIMEOUT, MAX_HTTPTIMEOUT
+    )
+    conf_httpretries = option_int(
+        entry, CONF_HTTPRETRIES, DEFAULT_HTTPRETRIES, MIN_HTTPRETRIES, MAX_HTTPRETRIES
+    )
+    verify_ssl = bool(entry.options.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
+    session = async_get_clientsession(hass, verify_ssl=verify_ssl)
+    return SiemensOzw672ApiClient(
+        entry.data.get(CONF_HOST),
+        entry.data.get(CONF_PROTOCOL),
+        entry.data.get(CONF_USERNAME),
+        entry.data.get(CONF_PASSWORD),
+        session,
+        timeout=conf_httptimeout,
+        retries=conf_httpretries,
+        verify_ssl=verify_ssl,
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up this integration using UI."""
     if hass.data.get(DOMAIN) is None:
         hass.data.setdefault(DOMAIN, {})
         _LOGGER.info(STARTUP_MESSAGE)
-    
-    _LOGGER.debug(f'STARTUP - Config: {entry}')
-    host = entry.data.get(CONF_HOST)
-    protocol = entry.data.get(CONF_PROTOCOL)
-    username = entry.data.get(CONF_USERNAME)
-    password = entry.data.get(CONF_PASSWORD)
-    device = entry.data.get(CONF_DEVICE)
-    deviceid = entry.data.get(CONF_DEVICE_ID)
-    datapoints = entry.data.get(CONF_DATAPOINTS)
-    conf_scaninterval = entry.options.get(CONF_SCANINTERVAL)
-    conf_httptimeout = entry.options.get(CONF_HTTPTIMEOUT)
-    conf_httpretries = entry.options.get(CONF_HTTPRETRIES)
-    if conf_scaninterval == None: conf_scaninterval = DEFAULT_SCANINTERVAL
-    if conf_httptimeout == None: conf_httptimeout = DEFAULT_HTTPTIMEOUT
-    if conf_httpretries == None: conf_httpretries = DEFAULT_HTTPRETRIES
 
-    session = async_get_clientsession(hass)
-    client = SiemensOzw672ApiClient(host, protocol, username, password, session, timeout=conf_httptimeout, retries=conf_httpretries)
-    coordinator = SiemensOzw672DataUpdateCoordinator(hass, client=client, datapoints=datapoints, scaninterval=(timedelta(seconds = conf_scaninterval)))
-    await coordinator.async_refresh()
-    
-    if not coordinator.last_update_success:
-        raise ConfigEntryNotReady
+    _LOGGER.debug("STARTUP - Setting up config entry %s", entry.entry_id)
+    conf_scaninterval = option_int(
+        entry, CONF_SCANINTERVAL, DEFAULT_SCANINTERVAL, MIN_SCANINTERVAL, MAX_SCANINTERVAL
+    )
+    datapoints = entry.data.get(CONF_DATAPOINTS)
+
+    client = _build_client(hass, entry)
+    coordinator = SiemensOzw672DataUpdateCoordinator(
+        hass,
+        client=client,
+        datapoints=datapoints,
+        scaninterval=timedelta(seconds=conf_scaninterval),
+    )
+    await coordinator.async_config_entry_first_refresh()
+
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS) 
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
 
-async def async_migrate_entry(hass, entry: ConfigEntry):                                                                                               
-    if entry.version == CONF_VERSION and entry.minor_version == CONF_MINOR_VERSION:                                                                    
-        return True                                                                                                                                    
-    _LOGGER.debug("Upgrading OZW Configuration")                                                                               
-    try:                                                                                                                                               
-        host = entry.data.get(CONF_HOST)                                                                                                               
-        protocol = entry.data.get(CONF_PROTOCOL)                                                                                                       
-        username = entry.data.get(CONF_USERNAME)                                                                                                       
-        password = entry.data.get(CONF_PASSWORD)                                                                                                       
-        session = async_get_clientsession(hass)                                                                                                        
-        conf_httptimeout = entry.options.get(CONF_HTTPTIMEOUT)                                                                                         
-        conf_httpretries = entry.options.get(CONF_HTTPRETRIES)                                                                                         
-        if conf_httptimeout == None: conf_httptimeout = DEFAULT_HTTPTIMEOUT                                                                            
-        if conf_httpretries == None: conf_httpretries = DEFAULT_HTTPRETRIES                                                                            
-        client = SiemensOzw672ApiClient(host, protocol, username, password, session, timeout=conf_httptimeout, retries=conf_httpretries)               
+
+async def async_migrate_entry(hass, entry: ConfigEntry):
+    """Bring an older config entry up to the current schema."""
+    if entry.version == CONF_VERSION and entry.minor_version == CONF_MINOR_VERSION:
+        return True
+    _LOGGER.debug("Upgrading OZW Configuration")
+    try:
+        client = _build_client(hass, entry)
         # Add new attribute - DeviceLongName if not exists
         _LOGGER.debug(f'Migrating existing data: {entry.data}')
-        if (entry.data.get(CONF_DEVICE_LONGNAME) == None):
-            sysinfo = await _get_sysinfo(client) #Gets the serial # of the OZW
-            deviceid = entry.data.get(CONF_DEVICE_ID) #DeviceID has serial number of OZW and RVS
+        if entry.data.get(CONF_DEVICE_LONGNAME) is None:
+            sysinfo = await _get_sysinfo(client)  # Gets the serial # of the OZW
+            deviceid = entry.data.get(CONF_DEVICE_ID)  # DeviceID has serial number of OZW and RVS
             discovereddevices = await _get_devices(client)
-            for dd in discovereddevices:
-                dd_serial=f'{sysinfo["SerialNr"]}:{dd["SerialNr"]}'
-                if (dd_serial == deviceid):
-                    name_string=f'{dd["Addr"]} {dd["Type"]}'
-                    _data=dict(entry.data)
-                    _data[CONF_DEVICE_LONGNAME]=name_string
-                    _options=dict(entry.options)
-                    if (_options == {}):
-                        _options = DEFAULT_OPTIONS
+            for dd in discovereddevices or []:
+                dd_serial = f'{sysinfo["SerialNr"]}:{dd["SerialNr"]}'
+                if dd_serial == deviceid:
+                    name_string = f'{dd["Addr"]} {dd["Type"]}'
+                    _data = dict(entry.data)
+                    _data[CONF_DEVICE_LONGNAME] = name_string
+                    _options = dict(entry.options)
+                    if _options == {}:
+                        _options = dict(DEFAULT_OPTIONS)
                     else:
                         _options[CONF_USE_DEVICE_LONGNAME] = False
 
@@ -162,47 +170,74 @@ async def async_migrate_entry(hass, entry: ConfigEntry):
                         entry, title=f"{entry.data.get(CONF_DEVICE)}", data=_data, options=_options
                     )
                     break
-        datapoints = entry.data.get(CONF_DATAPOINTS)                                                                                                   
-        all_dpdata = await client.async_get_data(datapoints)                                                                                                                                                                                         
-        all_dpdescr = await client.async_get_data_descr(datapoints, all_dpdata, True)                                                                                                                                                                 
-        newdatapoints=[]                                                                                                                               
-        for dpjson in datapoints:                                                                                                                      
-            dpdescr = all_dpdescr[dpjson["Id"]]["Description"]                                                                                         
-            dpdata = all_dpdata[dpjson["Id"]]["Data"]                                                                                   
-            newdatapoints.append({"Id": dpjson["Id"],"WriteAccess": dpjson["WriteAccess"],"OpLine": dpjson["OpLine"], "Name": dpdescr["Name"],"MenuItem": dpjson["MenuItem"], "DPDescr": dpdescr })
-        _data={**entry.data}                                                                                                                                                                       
-        _data[CONF_DATAPOINTS]=newdatapoints                                                                                                                                                       
-        hass.config_entries.async_update_entry(entry, data=_data,minor_version=CONF_MINOR_VERSION, version=CONF_VERSION)                                                                           
-        _LOGGER.debug("Config Check Complete")                                                                                                                                                     
-        return True                                                                                                                                                                                
-    except Exception as exception:                                                                                                                                                                 
-        _LOGGER.error(f'Config Check Failed: {repr(exception)}')                                                                                                                                   
-        return False                      
+        datapoints = entry.data.get(CONF_DATAPOINTS) or []
+        all_dpdata = await client.async_get_data(datapoints)
+        all_dpdescr = await client.async_get_data_descr(datapoints, all_dpdata, True)
+        newdatapoints = []
+        for dpjson in datapoints:
+            descr_response = all_dpdescr.get(dpjson["Id"])
+            if descr_response is None:
+                # The datapoint could not be read during migration. Carry it over
+                # unchanged rather than dropping it: a transient read failure must
+                # not silently delete the user's entity.
+                _LOGGER.warning(
+                    "Datapoint %s could not be re-read during migration; keeping its "
+                    "existing configuration", dpjson["Id"],
+                )
+                newdatapoints.append(dpjson)
+                continue
+            dpdescr = descr_response["Description"]
+            newdatapoints.append({
+                "Id": dpjson["Id"],
+                "WriteAccess": dpjson["WriteAccess"],
+                "OpLine": dpjson["OpLine"],
+                "Name": dpdescr.get("Name", dpjson.get("Name")),
+                "MenuItem": dpjson["MenuItem"],
+                "DPDescr": dpdescr,
+            })
+        _data = {**entry.data}
+        _data[CONF_DATAPOINTS] = newdatapoints
+        hass.config_entries.async_update_entry(
+            entry, data=_data, minor_version=CONF_MINOR_VERSION, version=CONF_VERSION
+        )
+        _LOGGER.debug("Config Check Complete")
+        return True
+    except Exception as exception:  # pylint: disable=broad-except
+        _LOGGER.error(f'Config Check Failed: {repr(exception)}')
+        return False
+
 
 async def _get_sysinfo(client):
+    """Return the OZW672 system info, or None if it could not be fetched.
+
+    The `except: pass` this replaces left `info` unbound, so a failed call raised
+    UnboundLocalError instead of reporting the real problem.
+    """
     try:
-        info = await client.async_get_sysinfo()
-    except Exception:  # pylint: disable=broad-except
-        pass
-    return info
+        return await client.async_get_sysinfo()
+    except SiemensOzw672ApiError as err:
+        _LOGGER.debug(f'Exception: {repr(err)}')
+        return None
+
 
 async def _get_devices(client):
+    """Return the discovered device list, or None if it could not be fetched."""
     try:
-        devices = await client.async_get_devices()
-    except Exception as err: # pylint: disable=broad-except
+        return await client.async_get_devices()
+    except SiemensOzw672ApiError as err:
         _LOGGER.debug(f'Exception: {repr(err)}')
-        pass
-    return devices
+        return None
 
 
 class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the API."""
+
     def __init__(
         self,
         hass: HomeAssistant,
         client: SiemensOzw672ApiClient,
         datapoints,
-        scaninterval
+        scaninterval,
     ) -> None:
         """Initialize."""
         self.api = client
@@ -214,61 +249,28 @@ class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
         """Update all data via the OZW672 Web API."""
         try:
             return await self.api.async_get_data(self.datapoints)
-            
-        except Exception as exception:
+        except SiemensOzw672ApiError as exception:
+            raise UpdateFailed(str(exception)) from exception
+        except Exception as exception:  # pylint: disable=broad-except
             _LOGGER.debug(f'Exception: {repr(exception)}')
-            raise UpdateFailed() from exception
+            raise UpdateFailed(repr(exception)) from exception
 
-    async def _async_update_data_forid(self,id):
-        """Update data for one DataPoint via the OZW672 Web API."""
-        for dp in self.datapoints:
-            if dp["Id"] == id:
-                try:
-                    return await self.api.async_get_data([dp])
-                    
-                except Exception as exception:
-                    _LOGGER.debug(f'Exception: {repr(exception)}')
-                    raise UpdateFailed() from exception
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Handle removal of an entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        hass.data[DOMAIN].pop(entry.entry_id, None)
     return unloaded
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
+    """Reload the config entry after its options changed.
 
-    if (entry.options[CONF_USE_DEVICE_LONGNAME] == True):
-        use_device_name = entry.data[CONF_DEVICE_LONGNAME]
-    else:
-        use_device_name = entry.data[CONF_DEVICE]
-
-    # The code below will help rename device and entities if "CONF_USE_DEVICE_LONGNAME" is changed
-    deviceregistry = device_registry.async_get(hass)
-    registry = entity_registry.async_get(hass)
-    datapoints = entry.data[CONF_DATAPOINTS]
-    newdatapoints=[]  
-    device_id=None
-    for dp in datapoints:
-        dp["device_name"]=use_device_name
-        newdatapoints.append(dp)
-        _LOGGER.debug (f'updating DP entry: {dp}. entry_id is: {dp["entry_id"]}')
-        if device_id is None and dp["device_id"] is not None:
-            device_id=dp["device_id"]
-    _data={**entry.data}
-    _data[CONF_DATAPOINTS]=newdatapoints  
-    
-    _LOGGER.debug(f'Update the Entity Registry')
-    hass.config_entries.async_update_entry(
-        entry, title=f"{use_device_name}", data=_data
-    )
-    _LOGGER.debug(f'Update the Device Registry')
-    deviceregistry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, device_id)},
-        name=use_device_name
-    )
-    
+    This is the whole listener now. It used to rewrite the device registry and
+    entry data by hand but never actually reload, so a changed scan interval,
+    timeout or retry count did nothing until Home Assistant was restarted. The
+    device and entity names come from the entities' own device_info, which is
+    rebuilt on reload.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)

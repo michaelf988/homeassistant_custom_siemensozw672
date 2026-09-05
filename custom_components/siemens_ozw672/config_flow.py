@@ -4,7 +4,6 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers import selector
-from datetime import timedelta
 
 from .api import SiemensOzw672ApiClient
 from .const import CONF_HOST
@@ -22,15 +21,20 @@ from .const import CONF_SCANINTERVAL
 from .const import CONF_HTTPTIMEOUT
 from .const import CONF_HTTPRETRIES
 from .const import DOMAIN
-from .const import PLATFORMS
 from .const import DEFAULT_HTTPTIMEOUT
 from .const import DEFAULT_HTTPRETRIES
 from .const import DEFAULT_SCANINTERVAL
-from .const import DEFAULT_PREFIX_FUNCTION
-from .const import DEFAULT_PREFIX_OPLINE
 from .const import DEFAULT_USE_DEVICE_LONGNAME
 from .const import DEFAULT_OPTIONS
 from .const import CONF_USE_DEVICE_LONGNAME
+from .const import CONF_VERIFY_SSL
+from .const import DEFAULT_VERIFY_SSL
+from .const import MIN_SCANINTERVAL
+from .const import MAX_SCANINTERVAL
+from .const import MIN_HTTPTIMEOUT
+from .const import MAX_HTTPTIMEOUT
+from .const import MIN_HTTPRETRIES
+from .const import MAX_HTTPRETRIES
 
 import json
 
@@ -67,6 +71,10 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self.alldevices = None
         self._options = dict(DEFAULT_OPTIONS)
         self._disablenamechoice = False
+        self._alldevicemenuitems = []
+        # Set when the selected device is already configured, so the final step
+        # updates that entry instead of creating a duplicate one beside it.
+        self._existing_entry = None
 
     async def async_step_user(self, user_input=None):
         """Handle a flow initialized by the user."""
@@ -123,7 +131,8 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             ### Support updating an existing device
             existing_entry = self.async_entry_for_existingdevice(self._data[CONF_DEVICE_ID])
             if existing_entry:
-                self._datapoints = existing_entry.data.get(CONF_DATAPOINTS)
+                self._existing_entry = existing_entry
+                self._datapoints = list(existing_entry.data.get(CONF_DATAPOINTS) or [])
                 # Detect if a change to the naming has occurred and updated all.
                 _LOGGER.debug(f'Found existing datapoints: {self._datapoints}')
             await self.async_set_unique_id(self._devserialnumber)
@@ -181,7 +190,18 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     dev_title=self._data[CONF_DEVICE_LONGNAME]
                 else:
                     dev_title=self._data[CONF_DEVICE]
-                return self.async_create_entry(    
+                if self._existing_entry is not None:
+                    # The device is already configured. Updating that entry keeps
+                    # its entities and history; creating a second entry with the
+                    # same unique id used to duplicate every entity instead.
+                    self.hass.config_entries.async_update_entry(
+                        self._existing_entry,
+                        title=dev_title,
+                        data=self._data,
+                        options=self._options,
+                    )
+                    return self.async_abort(reason="reconfigure_successful")
+                return self.async_create_entry(
                     title=dev_title, data=self._data, options=self._options
                 )
         else:
@@ -192,9 +212,10 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ### Note - these could be submenus
                 return await self._show_submenu_selection_form(item,user_input)
             else:
-                # We are done
-                return
-        return await self._show_submenu_selection_form(item,user_input)
+                # Nothing was selected on the main menu, so there is nothing to
+                # walk through. Returning None here made Home Assistant raise on
+                # a flow step that produced no result.
+                return self.async_abort(reason="no_menu_items")
 
 
     @staticmethod
@@ -237,11 +258,14 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         for device in self._discovereddevices:
             devchannel=str(device["Text"]["Long"]).split(' ',1)[0]
             devname=str(device["Text"]["Long"]).split(' ',1)[1]
+            # Fall back to the name from the menu tree, then let a matching entry
+            # in the device list override it. Without the break, the *last* device
+            # in the list decided the name for every entry.
+            device["Name"] = devname
             for dev in self.alldevices:
                 if dev['Addr'] == devchannel:
-                    device["Name"]=dev['Name']
-                else:
-                    device["Name"]=devname
+                    device["Name"] = dev['Name']
+                    break
             device["LongName"]=str(device["Text"]["Long"])
             device_list_selector.append(selector.SelectOptionDict(value=json.dumps(device), label="Address+Device: "+str(device["Text"]["Long"] +" (Name:"+device["Name"]+")")))
         if self._disablenamechoice == False:
@@ -295,7 +319,6 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             menutree_menulocation = menutree_name
         else:
             menutree_menulocation = menutree_item["MenuItem"] + "->" + menutree_name
-        existing_menu_items = self._devicemenuitems
         existing_dp_items = self._datapoints
         
         new_all_items = await self._get_menutree(menutree_id)
@@ -437,10 +460,12 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
             self.conf_httpretries = self.options.get(CONF_HTTPRETRIES)
             self.conf_scaninterval = self.options.get(CONF_SCANINTERVAL)
             self.conf_use_device_longname = self.options.get(CONF_USE_DEVICE_LONGNAME)
+            self.conf_verify_ssl = self.options.get(CONF_VERIFY_SSL)
             if self.conf_httptimeout is None: self.conf_httptimeout=DEFAULT_HTTPTIMEOUT
             if self.conf_httpretries is None: self.conf_httpretries=DEFAULT_HTTPRETRIES
             if self.conf_scaninterval is None: self.conf_scaninterval=DEFAULT_SCANINTERVAL
             if self.conf_use_device_longname is None: self.conf_use_device_longname=DEFAULT_USE_DEVICE_LONGNAME
+            if self.conf_verify_ssl is None: self.conf_verify_ssl=DEFAULT_VERIFY_SSL
         return await self.async_step_user()
 
     async def async_step_user(self, user_input=None):
@@ -455,10 +480,20 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_HTTPTIMEOUT, default=self.conf_httptimeout): int,
-                    vol.Required(CONF_HTTPRETRIES, default=self.conf_httpretries): int,
-                    vol.Required(CONF_SCANINTERVAL, default=self.conf_scaninterval): int,
+                    # Bounded, because a bare int let a scan interval of 0 turn the
+                    # coordinator into a tight polling loop and 0 retries stopped the
+                    # client from issuing a single request.
+                    vol.Required(CONF_HTTPTIMEOUT, default=self.conf_httptimeout): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_HTTPTIMEOUT, max=MAX_HTTPTIMEOUT)
+                    ),
+                    vol.Required(CONF_HTTPRETRIES, default=self.conf_httpretries): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_HTTPRETRIES, max=MAX_HTTPRETRIES)
+                    ),
+                    vol.Required(CONF_SCANINTERVAL, default=self.conf_scaninterval): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCANINTERVAL, max=MAX_SCANINTERVAL)
+                    ),
                     vol.Required(CONF_USE_DEVICE_LONGNAME, default=self.conf_use_device_longname): bool,
+                    vol.Required(CONF_VERIFY_SSL, default=self.conf_verify_ssl): bool,
                     vol.Required("switch", default=self.options.get("switch", True)): bool,
                     vol.Required("select", default=self.options.get("select", True)): bool,
                     vol.Required("number", default=self.options.get("number", True)): bool,
@@ -469,11 +504,21 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def _update_options(self):
-        """Update config entry options."""
+        """Update config entry options.
+
+        The entry title follows the device-name choice here rather than in the
+        update listener: renaming from inside async_setup_entry would fire the
+        listener again and reload the entry a second time.
+        """
         _LOGGER.debug(
-            "Recreating entry %s due to configuration change",
-            self.config_entry.title
+            "Updating options for entry %s", self.config_entry.title
         )
+        if self.options.get(CONF_USE_DEVICE_LONGNAME):
+            new_title = self.config_entry.data.get(CONF_DEVICE_LONGNAME)
+        else:
+            new_title = self.config_entry.data.get(CONF_DEVICE)
+        if new_title and new_title != self.config_entry.title:
+            self.hass.config_entries.async_update_entry(self.config_entry, title=new_title)
         return self.async_create_entry(title="", data=self.options)
 
 

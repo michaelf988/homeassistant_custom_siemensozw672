@@ -45,7 +45,9 @@
       "timeout": "Timeout connecting to the device."
     },
     "abort": {
-      "single_instance_allowed": "Only a single instance is allowed."
+      "single_instance_allowed": "Only a single instance is allowed.",
+      "reconfigure_successful": "The existing OZW672 device was updated with your new selection.",
+      "no_menu_items": "No menu items were selected, so there is nothing to configure."
     }
   },
   "options": {
@@ -60,7 +62,8 @@
           "httptimeout": "HTTP Timeout (sec)",
           "httpretries": "HTTP Retries",
           "scaninterval": "Polling Interval (sec)",
-          "use_device_longname": "Use the Device Addr+Type instead of the DeviceName"
+          "use_device_longname": "Use the Device Addr+Type instead of the DeviceName",
+          "verify_ssl": "Verify the HTTPS certificate (leave off for the device's self-signed certificate)"
         }
       }
     }

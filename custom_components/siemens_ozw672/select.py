@@ -1,111 +1,99 @@
 """SelectEntity platform for Siemens OZW672."""
-from .const import DEFAULT_NAME
-from .const import DOMAIN
-from .const import ICON
-from .const import ICON_SELECT
-from .const import SENSOR
-from .const import CONF_MENUITEMS
-from .const import CONF_DATAPOINTS
-from .const import CONF_PREFIX_FUNCTION
-from .const import CONF_PREFIX_OPLINE
-
-from .entity import SiemensOzw672Entity
-from .api import SiemensOzw672ApiClient
-from homeassistant.helpers.entity import Entity
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+import logging
 
 from homeassistant.components.select import SelectEntity
+from homeassistant.exceptions import HomeAssistantError
 
-from homeassistant.const import (
-    PERCENTAGE
-)
-
-import logging
+from .api import SiemensOzw672ApiError
+from .const import DOMAIN
+from .const import ICON_SELECT
+from .const import SELECT
+from .entity import SiemensOzw672Entity
+from .helpers import dp_configs_for_hatype, platform_enabled
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup select platform."""
-    _LOGGER.debug(f"SELECT - Setup_Entry.  DATA: {hass.data[DOMAIN]}")    
+    if not platform_enabled(entry, SELECT):
+        _LOGGER.debug("SELECT - domain disabled in options, adding no entities")
+        return
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    datapoints = coordinator.data
-    # Add sensors
-    entities=[]
-    for item in datapoints:
-        _LOGGER.debug(f"SELECT Data Point Item: {datapoints[item]}")
-        # Reset per datapoint so a non-matching item cannot reuse the previous config.
-        dp_config=None
-        for dp_data in entry.data["datapoints"]:
-            if dp_data["Id"] == item :
-                dp_config=dp_data
-                if int(dp_data["OpLine"]) > 1:
-                    identifier = dp_data["OpLine"] 
-                else:
-                    identifier="00"+item
-                ### Will use the OpLine as the identifier if it exists. If not - we will use the API ID.  
-                #   Note: the API datapoint ID can change if the tree is re-created.  
-                #   I am hoping that by using the OpLine as the identifier - we will avoid duplicate sensors 
-                dp_config.update({'entry_id': entry.entry_id + "_" + identifier}) 
-                dp_config.update({'device_id': entry.entry_id})
-                dp_config.update({'device_name': entry.data["devicename"]})
-                ### Need to support prefixing our entites by Function and Operation Line (Referenced in the manual)
-                prefix=""
-                if entry.data[CONF_PREFIX_FUNCTION] == True: prefix=f'{dp_data["MenuItem"]} - '
-                if entry.data[CONF_PREFIX_OPLINE] == True: prefix=prefix + f'{dp_data["OpLine"]} '
-                dp_config.update({'entity_prefix': prefix})
-                break
-        ### Add our Select Entities        
-        if dp_config is not None:
-            if dp_config["DPDescr"]["HAType"] == "select":
-                _LOGGER.debug(f"SELECT Adding Entity with config: {dp_config} and data: {dp_data}")
-                entities.append(dp_config)
-                async_add_entities([SiemensOzw672SelectControl(coordinator,dp_config)])
-            else:
-                # DO nothing - unknown datapoint types will be added in the sensor domain.
-                continue
+    entities = [
+        SiemensOzw672SelectControl(coordinator, dp_config)
+        for dp_config in dp_configs_for_hatype(entry, "select")
+    ]
+    _LOGGER.debug(f"SELECT Adding {len(entities)} entities")
+    async_add_entities(entities)
+
 
 class SiemensOzw672SelectControl(SiemensOzw672Entity, SelectEntity):
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        _LOGGER.debug(f"SiemensOzw672SelectControl: Config: {self.config_entry}")
-        return f'{self.config_entry["entity_prefix"]}{self.config_entry["Name"]}'
 
-    async def async_select_option(self, option: str, **kwargs):
-        """Change the selected option."""
-        _LOGGER.debug(f'SiemensOzw672SelectControl - select_option String: {option}')
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        enums=self.config_entry["DPDescr"]["Enums"]
-        for enum in enums:
-            if enum["Text"].encode('unicode_escape').decode() == option.encode('unicode_escape').decode():
-                _LOGGER.info(f'SiemensOzw672SelectControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {enum["Value"]}')
-                output = await self.coordinator.api.async_write_data(self.config_entry,enum["Value"])
-                await self.coordinator._async_update_data_forid(item)
-                await self.coordinator.async_request_refresh()
-        return 
+    _attr_icon = ICON_SELECT
+
+    @property
+    def _enums(self) -> list[dict]:
+        """The enumeration entries discovered from the datapoint description."""
+        return (self.config_entry.get("DPDescr") or {}).get("Enums") or []
+
+    @property
+    def options(self) -> list[str]:
+        """Return the option list from the Enums discovered from the datapoint description.
+
+        Order follows the device's own list. The previous implementation built a
+        dict keyed by int(Value) purely to drop duplicates, which also meant a
+        datapoint whose description carried no Enums raised KeyError.
+        """
+        seen: list[str] = []
+        for enum in self._enums:
+            text = enum.get("Text")
+            if text is not None and text not in seen:
+                seen.append(text)
+        return seen
 
     @property
     def current_option(self) -> str | None:
-        """Return the selected entity option to represent the entity state."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return data
+        """Return the selected entity option to represent the entity state.
 
-    @property
-    def options(self):
-        """Return the option list from the Enums discovered from the datapoint description."""
-        data_options={}
-        for enum in self.config_entry["DPDescr"]["Enums"]:
-            idx = int(enum["Value"])
-            val = enum["Text"]
-            data_options[idx] = val
-        return list(data_options.values())
-        
-    @property
-    def icon(self):
-        """Return the icon of the sensor."""
-        return ICON_SELECT
+        Returns None for a reported value that is not one of the options, which
+        Home Assistant would otherwise reject with an "invalid option" error.
+        """
+        value = self._raw_value
+        if value is None:
+            return None
+        if value not in self.options:
+            _LOGGER.debug(
+                "Datapoint %s reports %r, which is not one of its known options %s",
+                self.config_entry["Id"], value, self.options,
+            )
+            return None
+        return value
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        _LOGGER.debug(f'SiemensOzw672SelectControl - select_option String: {option}')
+        item = self.config_entry["Id"]
+        opline = self.config_entry["OpLine"]
+        name = self.config_entry["Name"]
+
+        enum_value = next(
+            (enum.get("Value") for enum in self._enums if enum.get("Text") == option),
+            None,
+        )
+        if enum_value is None:
+            raise HomeAssistantError(
+                f"{option!r} is not a known option for {name} on the OZW672"
+            )
+
+        _LOGGER.info(
+            f'SiemensOzw672SelectControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {enum_value}'
+        )
+        try:
+            await self.coordinator.api.async_write_data(self.config_entry, enum_value)
+        except SiemensOzw672ApiError as exception:
+            raise HomeAssistantError(
+                f"Could not write {name} on the OZW672: {exception}"
+            ) from exception
+        await self.coordinator.async_request_refresh()
