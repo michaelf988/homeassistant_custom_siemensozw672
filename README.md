@@ -76,12 +76,18 @@ tag that disagrees with the manifest. To cut a release:
 1. `python scripts/set_version.py 0.6.0`
 2. Add the matching `## 0.6.0` section to `CHANGELOG.md`.
 3. Commit and push. CI runs hassfest, the HACS validation and the test suite.
-4. Publish a GitHub release tagged `v0.6.0` (or `0.6.0`).
+4. Run the **Release** workflow from the Actions tab with **publish** ticked.
 
-The workflow then builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`
-and attaches it to the release. To exercise the pipeline without publishing anything,
-run the Release workflow manually from the Actions tab: everything runs except the
-upload, and the archive is kept as a build artifact you can download and inspect. `hacs.json` sets `zip_release`, so HACS installs that
+That builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`, tags the
+commit `v0.6.0`, and publishes a release whose notes are the `## 0.6.0` section of the
+changelog — so the release and the changelog cannot drift apart. It refuses to run if a
+release for that tag already exists.
+
+Running the same workflow with **publish** unticked is a dry run: everything except the
+publish, with the archive kept as a downloadable build artifact.
+
+Publishing from the Releases page by hand still works and takes the same path — the
+workflow checks the tag against `manifest.json` and attaches the archive. `hacs.json` sets `zip_release`, so HACS installs that
 archive rather than cloning the repository.
 
 A test guards the whole chain: `manifest.json`, `const.VERSION`, the changelog heading

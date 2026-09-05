@@ -3,9 +3,14 @@ name: Release
 on:
   release:
     types: [published]
-  # A dry run, so the pipeline can be exercised without publishing anything.
-  # Everything except the upload runs exactly as it does for a real release.
   workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Create and publish the release for the version in manifest.json.
+          Leave off for a dry run that builds and checks the archive only.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,11 +22,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the tag matches the version in the manifest
+      # manifest.json is the source of truth for the version. A release event has
+      # to agree with it; a manual run takes the version straight from it.
+      - name: Resolve the version
+        id: version
         run: |
           manifest="$(python scripts/set_version.py --check)"
+          echo "version=$manifest" >> "$GITHUB_OUTPUT"
+          echo "tag=v$manifest" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" != "release" ]; then
-            echo "Dry run: would release $manifest. Skipping the tag check, there is no tag."
+            echo "Manual run for $manifest (publish=${{ inputs.publish }})"
             exit 0
           fi
           tag="${GITHUB_REF_NAME#v}"
@@ -53,15 +63,36 @@ jobs:
             echo "::error::the archive carries __pycache__"; exit 1
           fi
 
+      # Cutting the release from here rather than from the Releases page: the
+      # notes come out of CHANGELOG.md, so the two cannot drift apart.
+      - name: Create and publish the release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Bump the version first:"
+            echo "python scripts/set_version.py <new version>, add a CHANGELOG section, commit."
+            exit 1
+          fi
+          python scripts/set_version.py --notes > release-notes.md
+          gh release create "$TAG" siemens_ozw672.zip \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file release-notes.md
+
       # On a dry run there is no release to attach to, so keep the archive as a
       # build artifact instead - it can be downloaded and inspected.
       - name: Upload the archive as an artifact
-        if: github.event_name != 'release'
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
         uses: actions/upload-artifact@v4
         with:
           name: siemens_ozw672-zip
           path: siemens_ozw672.zip
 
+      # Publishing a release from the Releases page instead: same archive, same
+      # checks, just attached to the release that already exists.
       - name: Attach it to the release
         if: github.event_name == 'release'
         env:
