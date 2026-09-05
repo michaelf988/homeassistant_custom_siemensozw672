@@ -3,6 +3,9 @@ name: Release
 on:
   release:
     types: [published]
+  # A dry run, so the pipeline can be exercised without publishing anything.
+  # Everything except the upload runs exactly as it does for a real release.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,8 +19,12 @@ jobs:
 
       - name: Check the tag matches the version in the manifest
         run: |
-          tag="${GITHUB_REF_NAME#v}"
           manifest="$(python scripts/set_version.py --check)"
+          if [ "${{ github.event_name }}" != "release" ]; then
+            echo "Dry run: would release $manifest. Skipping the tag check, there is no tag."
+            exit 0
+          fi
+          tag="${GITHUB_REF_NAME#v}"
           if [ "$tag" != "$manifest" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match manifest version $manifest."
             echo "Bump first: python scripts/set_version.py $tag, commit, then tag that commit."
@@ -32,7 +39,31 @@ jobs:
           cd custom_components/siemens_ozw672
           zip -r "$GITHUB_WORKSPACE/siemens_ozw672.zip" . -x '*__pycache__*'
 
+      - name: Check the archive is what HACS expects
+        run: |
+          # HACS unpacks this straight into custom_components/siemens_ozw672/, so
+          # manifest.json has to sit at the archive root, not one level down.
+          unzip -l siemens_ozw672.zip
+          unzip -p siemens_ozw672.zip manifest.json > /dev/null
+          for required in __init__.py const.py config_flow.py translations/en.json; do
+            unzip -l siemens_ozw672.zip | grep -q " $required$" \
+              || { echo "::error::$required missing from the archive"; exit 1; }
+          done
+          if unzip -l siemens_ozw672.zip | grep -q "__pycache__"; then
+            echo "::error::the archive carries __pycache__"; exit 1
+          fi
+
+      # On a dry run there is no release to attach to, so keep the archive as a
+      # build artifact instead - it can be downloaded and inspected.
+      - name: Upload the archive as an artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: siemens_ozw672-zip
+          path: siemens_ozw672.zip
+
       - name: Attach it to the release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" siemens_ozw672.zip --clobber
