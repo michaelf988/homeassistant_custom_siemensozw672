@@ -3,9 +3,9 @@
 NAME = "Siemens OZW672"
 DOMAIN = "siemens_ozw672"
 DOMAIN_DATA = f"{DOMAIN}_data"
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 CONF_VERSION = 1
-CONF_MINOR_VERSION = 5
+CONF_MINOR_VERSION = 6
 
 ATTRIBUTION = "Integration created by John"
 # Shown as the device manufacturer in Home Assistant. Nominative use only - see
@@ -57,6 +57,29 @@ CONF_HTTPTIMEOUT = "httptimeout"
 CONF_HTTPRETRIES = "httpretries"
 CONF_USE_DEVICE_LONGNAME = "use_device_longname"
 CONF_VERIFY_SSL = "verify_ssl"
+CONF_REQUEST_DELAY = "request_delay"
+
+# Polling priorities. The OZW672 is a small embedded web server and every datapoint
+# costs it one HTTP request, so not everything deserves the same poll rate. Each
+# configured datapoint carries one of these under CONF_PRIORITY, and each tier gets
+# its own coordinator with its own interval.
+CONF_PRIORITY = "Priority"
+PRIORITY_FAST = "fast"
+PRIORITY_MEDIUM = "medium"
+PRIORITY_SLOW = "slow"
+PRIORITIES = (PRIORITY_FAST, PRIORITY_MEDIUM, PRIORITY_SLOW)
+# Datapoints configured before priorities existed, and anything not explicitly
+# raised, land in the middle tier.
+DEFAULT_PRIORITY = PRIORITY_MEDIUM
+
+# Form keys for the priority-assignment step.
+CONF_PRIORITY_FAST = "priority_fast"
+CONF_PRIORITY_MEDIUM = "priority_medium"
+
+# CONF_SCANINTERVAL keeps its name and its role as the *fastest* tier's interval,
+# so an existing entry's stored value keeps meaning what it always meant.
+CONF_INTERVAL_MEDIUM = "interval_medium"
+CONF_INTERVAL_SLOW = "interval_slow"
 
 DEFAULT_HTTPTIMEOUT = 30
 DEFAULT_HTTPRETRIES = 2
@@ -69,6 +92,19 @@ DEFAULT_USE_DEVICE_LONGNAME = False
 # hard-coded `verify_ssl=False` so anyone who does install a trusted certificate can
 # turn it on.
 DEFAULT_VERIFY_SSL = False
+DEFAULT_INTERVAL_MEDIUM = 300
+DEFAULT_INTERVAL_SLOW = 900
+# Extra pause between consecutive requests to the device, in seconds. 0 keeps the
+# previous behaviour; raise it if the OZW672 struggles under a long poll.
+DEFAULT_REQUEST_DELAY = 0.0
+MAX_REQUEST_DELAY = 10.0
+
+# Which option carries each tier's interval, and what it defaults to.
+PRIORITY_INTERVAL_OPTIONS = {
+    PRIORITY_FAST: (CONF_SCANINTERVAL, DEFAULT_SCANINTERVAL),
+    PRIORITY_MEDIUM: (CONF_INTERVAL_MEDIUM, DEFAULT_INTERVAL_MEDIUM),
+    PRIORITY_SLOW: (CONF_INTERVAL_SLOW, DEFAULT_INTERVAL_SLOW),
+}
 
 # Bounds for the numeric options. The options dialog accepted any int, so a scan
 # interval of 0 turned the coordinator into a tight polling loop and 0 retries meant
@@ -87,6 +123,9 @@ DEFAULT_OPTIONS = {'httptimeout': DEFAULT_HTTPTIMEOUT,
     CONF_PREFIX_OPLINE: DEFAULT_PREFIX_OPLINE, 
     CONF_USE_DEVICE_LONGNAME: DEFAULT_USE_DEVICE_LONGNAME,
     CONF_VERIFY_SSL: DEFAULT_VERIFY_SSL,
+    CONF_INTERVAL_MEDIUM: DEFAULT_INTERVAL_MEDIUM,
+    CONF_INTERVAL_SLOW: DEFAULT_INTERVAL_SLOW,
+    CONF_REQUEST_DELAY: DEFAULT_REQUEST_DELAY,
     'switch': True, 'select': True, 'number': True, 'binary_sensor': True, 'sensor': True
 }
 

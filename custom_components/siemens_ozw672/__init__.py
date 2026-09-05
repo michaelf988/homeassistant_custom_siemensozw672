@@ -4,6 +4,7 @@ For more details about this integration, please refer to
 https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672
 """
 import logging
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -23,7 +24,8 @@ from .const import CONF_HTTPTIMEOUT
 from .const import CONF_MINOR_VERSION
 from .const import CONF_PASSWORD
 from .const import CONF_PROTOCOL
-from .const import CONF_SCANINTERVAL
+from .const import CONF_PRIORITY
+from .const import CONF_REQUEST_DELAY
 from .const import CONF_USERNAME
 from .const import CONF_USE_DEVICE_LONGNAME
 from .const import CONF_VERIFY_SSL
@@ -31,18 +33,21 @@ from .const import CONF_VERSION
 from .const import DEFAULT_HTTPRETRIES
 from .const import DEFAULT_HTTPTIMEOUT
 from .const import DEFAULT_OPTIONS
-from .const import DEFAULT_SCANINTERVAL
+from .const import DEFAULT_PRIORITY
+from .const import DEFAULT_REQUEST_DELAY
 from .const import DEFAULT_VERIFY_SSL
 from .const import DOMAIN
 from .const import MAX_HTTPRETRIES
+from .const import MAX_REQUEST_DELAY
 from .const import MAX_HTTPTIMEOUT
 from .const import MAX_SCANINTERVAL
 from .const import MIN_HTTPRETRIES
 from .const import MIN_HTTPTIMEOUT
 from .const import MIN_SCANINTERVAL
+from .const import PRIORITY_INTERVAL_OPTIONS
 from .const import PLATFORMS
 from .const import STARTUP_MESSAGE
-from .helpers import option_int
+from .helpers import group_datapoints_by_priority, option_int
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -99,6 +104,11 @@ def _build_client(hass: HomeAssistant, entry: ConfigEntry) -> SiemensOzw672ApiCl
         entry, CONF_HTTPRETRIES, DEFAULT_HTTPRETRIES, MIN_HTTPRETRIES, MAX_HTTPRETRIES
     )
     verify_ssl = bool(entry.options.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
+    try:
+        request_delay = float(entry.options.get(CONF_REQUEST_DELAY, DEFAULT_REQUEST_DELAY))
+    except (TypeError, ValueError):
+        request_delay = DEFAULT_REQUEST_DELAY
+    request_delay = max(0.0, min(MAX_REQUEST_DELAY, request_delay))
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
     return SiemensOzw672ApiClient(
         entry.data.get(CONF_HOST),
@@ -109,7 +119,35 @@ def _build_client(hass: HomeAssistant, entry: ConfigEntry) -> SiemensOzw672ApiCl
         timeout=conf_httptimeout,
         retries=conf_httpretries,
         verify_ssl=verify_ssl,
+        request_delay=request_delay,
     )
+
+
+@dataclass
+class SiemensOzw672Runtime:
+    """What a loaded config entry keeps in hass.data.
+
+    One API client shared by every tier - it serialises all traffic through a
+    single lock, which is the whole point on a device this small - and one
+    coordinator per polling tier that actually has datapoints.
+    """
+
+    client: SiemensOzw672ApiClient
+    coordinators: dict = field(default_factory=dict)
+
+    def coordinator_for(self, priority: str):
+        """The coordinator polling this priority, falling back to any that exists."""
+        if priority in self.coordinators:
+            return self.coordinators[priority]
+        if DEFAULT_PRIORITY in self.coordinators:
+            return self.coordinators[DEFAULT_PRIORITY]
+        return next(iter(self.coordinators.values()))
+
+
+def _interval_for(entry: ConfigEntry, priority: str) -> int:
+    """The poll interval configured for one priority tier, in seconds."""
+    option, default = PRIORITY_INTERVAL_OPTIONS[priority]
+    return option_int(entry, option, default, MIN_SCANINTERVAL, MAX_SCANINTERVAL)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -119,21 +157,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         _LOGGER.info(STARTUP_MESSAGE)
 
     _LOGGER.debug("STARTUP - Setting up config entry %s", entry.entry_id)
-    conf_scaninterval = option_int(
-        entry, CONF_SCANINTERVAL, DEFAULT_SCANINTERVAL, MIN_SCANINTERVAL, MAX_SCANINTERVAL
-    )
-    datapoints = entry.data.get(CONF_DATAPOINTS)
-
     client = _build_client(hass, entry)
-    coordinator = SiemensOzw672DataUpdateCoordinator(
-        hass,
-        client=client,
-        datapoints=datapoints,
-        scaninterval=timedelta(seconds=conf_scaninterval),
-    )
-    await coordinator.async_config_entry_first_refresh()
+    runtime = SiemensOzw672Runtime(client=client)
 
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    for priority, tier_datapoints in group_datapoints_by_priority(entry).items():
+        interval = _interval_for(entry, priority)
+        _LOGGER.debug(
+            "Polling %d datapoint(s) at priority %s every %ss",
+            len(tier_datapoints), priority, interval,
+        )
+        runtime.coordinators[priority] = SiemensOzw672DataUpdateCoordinator(
+            hass,
+            client=client,
+            datapoints=tier_datapoints,
+            scaninterval=timedelta(seconds=interval),
+            priority=priority,
+        )
+
+    for coordinator in runtime.coordinators.values():
+        await coordinator.async_config_entry_first_refresh()
+
+    hass.data[DOMAIN][entry.entry_id] = runtime
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -142,69 +186,97 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 
 async def async_migrate_entry(hass, entry: ConfigEntry):
-    """Bring an older config entry up to the current schema."""
+    """Bring an older config entry up to the current schema.
+
+    Each step is applied on its own. The 1.4 -> 1.5 step re-reads every datapoint
+    description from the device, which is a lot of traffic for a controller this
+    small, so it must not run again just because a later, purely local step was
+    added on top of it.
+    """
     if entry.version == CONF_VERSION and entry.minor_version == CONF_MINOR_VERSION:
         return True
-    _LOGGER.debug("Upgrading OZW Configuration")
+    _LOGGER.debug(
+        "Upgrading OZW configuration from %s.%s to %s.%s",
+        entry.version, entry.minor_version, CONF_VERSION, CONF_MINOR_VERSION,
+    )
     try:
-        client = _build_client(hass, entry)
-        # Add new attribute - DeviceLongName if not exists
-        _LOGGER.debug(f'Migrating existing data: {entry.data}')
-        if entry.data.get(CONF_DEVICE_LONGNAME) is None:
-            sysinfo = await _get_sysinfo(client)  # Gets the serial # of the OZW
-            deviceid = entry.data.get(CONF_DEVICE_ID)  # DeviceID has serial number of OZW and RVS
-            discovereddevices = await _get_devices(client)
-            for dd in discovereddevices or []:
-                dd_serial = f'{sysinfo["SerialNr"]}:{dd["SerialNr"]}'
-                if dd_serial == deviceid:
-                    name_string = f'{dd["Addr"]} {dd["Type"]}'
-                    _data = dict(entry.data)
-                    _data[CONF_DEVICE_LONGNAME] = name_string
-                    _options = dict(entry.options)
-                    if _options == {}:
-                        _options = dict(DEFAULT_OPTIONS)
-                    else:
-                        _options[CONF_USE_DEVICE_LONGNAME] = False
+        data = dict(entry.data)
 
-                    hass.config_entries.async_update_entry(
-                        entry, title=f"{entry.data.get(CONF_DEVICE)}", data=_data, options=_options
-                    )
-                    break
-        datapoints = entry.data.get(CONF_DATAPOINTS) or []
-        all_dpdata = await client.async_get_data(datapoints)
-        all_dpdescr = await client.async_get_data_descr(datapoints, all_dpdata, True)
-        newdatapoints = []
-        for dpjson in datapoints:
-            descr_response = all_dpdescr.get(dpjson["Id"])
-            if descr_response is None:
-                # The datapoint could not be read during migration. Carry it over
-                # unchanged rather than dropping it: a transient read failure must
-                # not silently delete the user's entity.
-                _LOGGER.warning(
-                    "Datapoint %s could not be re-read during migration; keeping its "
-                    "existing configuration", dpjson["Id"],
-                )
-                newdatapoints.append(dpjson)
-                continue
-            dpdescr = descr_response["Description"]
-            newdatapoints.append({
-                "Id": dpjson["Id"],
-                "WriteAccess": dpjson["WriteAccess"],
-                "OpLine": dpjson["OpLine"],
-                "Name": dpdescr.get("Name", dpjson.get("Name")),
-                "MenuItem": dpjson["MenuItem"],
-                "DPDescr": dpdescr,
-            })
-        _data = {**entry.data}
-        _data[CONF_DATAPOINTS] = newdatapoints
+        if entry.minor_version < 5:
+            data = await _migrate_to_1_5(hass, entry, data)
+
+        if entry.minor_version < 6:
+            # Assign every datapoint the default polling priority. Purely local -
+            # the device is not contacted for this.
+            data[CONF_DATAPOINTS] = [
+                {**datapoint, CONF_PRIORITY: datapoint.get(CONF_PRIORITY, DEFAULT_PRIORITY)}
+                for datapoint in (data.get(CONF_DATAPOINTS) or [])
+            ]
+            _LOGGER.info(
+                "Assigned the '%s' polling priority to %d existing datapoint(s); "
+                "you can change this under the integration's options",
+                DEFAULT_PRIORITY, len(data[CONF_DATAPOINTS]),
+            )
+
         hass.config_entries.async_update_entry(
-            entry, data=_data, minor_version=CONF_MINOR_VERSION, version=CONF_VERSION
+            entry, data=data, minor_version=CONF_MINOR_VERSION, version=CONF_VERSION
         )
         _LOGGER.debug("Config Check Complete")
         return True
     except Exception as exception:  # pylint: disable=broad-except
         _LOGGER.error(f'Config Check Failed: {repr(exception)}')
         return False
+
+
+async def _migrate_to_1_5(hass, entry: ConfigEntry, data: dict) -> dict:
+    """Add DeviceLongName and re-read every datapoint description from the device."""
+    client = _build_client(hass, entry)
+    _LOGGER.debug(f'Migrating existing data: {entry.data}')
+    if data.get(CONF_DEVICE_LONGNAME) is None:
+        sysinfo = await _get_sysinfo(client)  # Gets the serial # of the OZW
+        deviceid = data.get(CONF_DEVICE_ID)  # DeviceID has serial number of OZW and RVS
+        discovereddevices = await _get_devices(client)
+        for dd in discovereddevices or []:
+            dd_serial = f'{sysinfo["SerialNr"]}:{dd["SerialNr"]}'
+            if dd_serial == deviceid:
+                data[CONF_DEVICE_LONGNAME] = f'{dd["Addr"]} {dd["Type"]}'
+                _options = dict(entry.options)
+                if _options == {}:
+                    _options = dict(DEFAULT_OPTIONS)
+                else:
+                    _options[CONF_USE_DEVICE_LONGNAME] = False
+                hass.config_entries.async_update_entry(
+                    entry, title=f"{data.get(CONF_DEVICE)}", options=_options
+                )
+                break
+
+    datapoints = data.get(CONF_DATAPOINTS) or []
+    all_dpdata = await client.async_get_data(datapoints)
+    all_dpdescr = await client.async_get_data_descr(datapoints, all_dpdata, True)
+    newdatapoints = []
+    for dpjson in datapoints:
+        descr_response = all_dpdescr.get(dpjson["Id"])
+        if descr_response is None:
+            # The datapoint could not be read. Carry it over unchanged rather than
+            # dropping it: a transient read failure must not silently delete the
+            # user's entity.
+            _LOGGER.warning(
+                "Datapoint %s could not be re-read during migration; keeping its "
+                "existing configuration", dpjson["Id"],
+            )
+            newdatapoints.append(dpjson)
+            continue
+        dpdescr = descr_response["Description"]
+        newdatapoints.append({
+            "Id": dpjson["Id"],
+            "WriteAccess": dpjson["WriteAccess"],
+            "OpLine": dpjson["OpLine"],
+            "Name": dpdescr.get("Name", dpjson.get("Name")),
+            "MenuItem": dpjson["MenuItem"],
+            "DPDescr": dpdescr,
+        })
+    data[CONF_DATAPOINTS] = newdatapoints
+    return data
 
 
 async def _get_sysinfo(client):
@@ -238,12 +310,16 @@ class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
         client: SiemensOzw672ApiClient,
         datapoints,
         scaninterval,
+        priority: str = DEFAULT_PRIORITY,
     ) -> None:
         """Initialize."""
         self.api = client
         self.platforms = []
         self.datapoints = datapoints
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=scaninterval)
+        self.priority = priority
+        super().__init__(
+            hass, _LOGGER, name=f"{DOMAIN} ({priority})", update_interval=scaninterval
+        )
 
     async def _async_update_data(self):
         """Update all data via the OZW672 Web API."""

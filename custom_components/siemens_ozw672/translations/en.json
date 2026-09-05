@@ -36,6 +36,14 @@
           "menuitems": "Select one or more Submenu Items",
           "datapoints": "Select one or more Data Points"
         }
+      },
+      "priorities": {
+        "title": "Siemens OZW672 - Polling priorities",
+        "description": "The OZW672 reads one datapoint per HTTP request, so polling everything at the same rate is what makes a large selection slow. Pick the {count} selected datapoints that need to be current.\n\nAnything you do not pick here is polled in the slowest tier.",
+        "data": {
+          "priority_fast": "Poll frequently (priority 1)",
+          "priority_medium": "Poll at a medium rate (priority 2)"
+        }
       }
     },
     "error": {
@@ -52,7 +60,14 @@
   },
   "options": {
     "step": {
-      "user": {
+      "init": {
+        "title": "Siemens OZW672",
+        "menu_options": {
+          "settings": "Connection, polling intervals and entity domains",
+          "priorities": "Which datapoints are polled how often"
+        }
+      },
+      "settings": {
         "data": {
           "binary_sensor": "Binary sensor domain enabled",
           "sensor": "Sensor domain enabled",
@@ -61,9 +76,21 @@
           "number": "Number domain enabled",
           "httptimeout": "HTTP Timeout (sec)",
           "httpretries": "HTTP Retries",
-          "scaninterval": "Polling Interval (sec)",
+          "scaninterval": "Polling interval, priority 1 - fast (sec)",
           "use_device_longname": "Use the Device Addr+Type instead of the DeviceName",
-          "verify_ssl": "Verify the HTTPS certificate (leave off for the device's self-signed certificate)"
+          "verify_ssl": "Verify the HTTPS certificate (leave off for the device's self-signed certificate)",
+          "interval_medium": "Polling interval, priority 2 - medium (sec)",
+          "interval_slow": "Polling interval, priority 3 - slow (sec)",
+          "request_delay": "Pause between requests (sec, 0 = none)"
+        },
+        "title": "Siemens OZW672 - Settings"
+      },
+      "priorities": {
+        "title": "Siemens OZW672 - Polling priorities",
+        "description": "Sort the {count} configured datapoints into polling tiers. Anything you do not pick is polled in the slowest tier.",
+        "data": {
+          "priority_fast": "Poll frequently (priority 1)",
+          "priority_medium": "Poll at a medium rate (priority 2)"
         }
       }
     }

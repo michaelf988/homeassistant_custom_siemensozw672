@@ -11,6 +11,13 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.siemens_ozw672.const import (
     CONF_DATAPOINTS,
+    CONF_INTERVAL_MEDIUM,
+    CONF_INTERVAL_SLOW,
+    CONF_PRIORITY,
+    CONF_SCANINTERVAL,
+    PRIORITY_FAST,
+    PRIORITY_MEDIUM,
+    PRIORITY_SLOW,
     CONF_DEVICE,
     CONF_DEVICE_ID,
     CONF_DEVICE_LONGNAME,
@@ -27,22 +34,23 @@ from custom_components.siemens_ozw672.const import (
 )
 
 
-def _dp(id, opline, name, dptype, hatype, **descr):
+def _dp(id, opline, name, dptype, hatype, priority=PRIORITY_MEDIUM, **descr):
     return {
         "Id": id,
         "WriteAccess": "true" if hatype in ("switch", "select", "number") else "false",
         "OpLine": opline,
         "Name": name,
         "MenuItem": "Diagnostics",
+        CONF_PRIORITY: priority,
         "DPDescr": {"Type": dptype, "HAType": hatype, **descr},
     }
 
 
 DATAPOINTS = [
-    _dp("1960", "39", "Outside temp", "Numeric", "sensor", DecimalDigits="1"),
+    _dp("1960", "39", "Outside temp", "Numeric", "sensor", priority=PRIORITY_FAST, DecimalDigits="1"),
     # The device reports "----" for this one: no reading at all.
     _dp("1963", "44", "Flow temp", "Numeric", "sensor", DecimalDigits="1"),
-    _dp("1961", "40", "Energy total", "Numeric", "sensor", DecimalDigits="0"),
+    _dp("1961", "40", "Energy total", "Numeric", "sensor", priority=PRIORITY_SLOW, DecimalDigits="0"),
     # Writeable energy - the only shape that reaches SiemensOzw672EnergyControl.
     _dp("1962", "41", "Energy setpoint", "Numeric", "number",
         Min="0.000000", Max="100000.000000", Resolution="1.000000", DecimalDigits="1"),
@@ -202,22 +210,65 @@ async def test_unique_ids_use_the_operating_line(hass):
     assert entity.unique_id == "entity_entry_39"
 
 
-async def test_changing_options_reloads_the_entry(hass):
-    """The update listener now actually reloads, so a new scan interval takes effect.
+async def test_one_coordinator_per_populated_tier(hass):
+    """Each polling tier that has datapoints gets its own coordinator and interval."""
+    entry = await _setup(hass)
+    runtime = hass.data[DOMAIN][entry.entry_id]
+
+    intervals = {
+        priority: coordinator.update_interval.total_seconds()
+        for priority, coordinator in runtime.coordinators.items()
+    }
+    assert intervals == {PRIORITY_FAST: 60, PRIORITY_MEDIUM: 300, PRIORITY_SLOW: 900}
+    # One client shared by all three, so the request lock still serialises everything.
+    assert {id(c.api) for c in runtime.coordinators.values()} == {id(runtime.client)}
+
+
+async def test_empty_tiers_get_no_coordinator(hass):
+    """A tier with no datapoints must not poll the device for an empty list."""
+    datapoints = [dp for dp in copy.deepcopy(DATAPOINTS) if dp["Id"] in ("1960", "1963")]
+    for datapoint in datapoints:
+        datapoint[CONF_PRIORITY] = PRIORITY_FAST
+
+    entry = await _setup(hass, datapoints=datapoints)
+
+    assert set(hass.data[DOMAIN][entry.entry_id].coordinators) == {PRIORITY_FAST}
+
+
+async def test_each_entity_binds_to_its_own_tier(hass):
+    """An entity reads from the coordinator that actually polls its datapoint."""
+    entry = await _setup(hass)
+    runtime = hass.data[DOMAIN][entry.entry_id]
+
+    # The fast tier only ever polls its own datapoints.
+    assert set(runtime.coordinators[PRIORITY_FAST].data) == {"1960"}
+    assert "1961" in runtime.coordinators[PRIORITY_SLOW].data
+    # ... and both entities still resolve their value.
+    assert hass.states.get("sensor.outside_temp").state == "15.8"
+    assert hass.states.get("sensor.energy_total").state == "15.0"
+
+
+async def test_changing_intervals_reloads_the_entry(hass):
+    """The update listener now actually reloads, so new intervals take effect.
 
     It used to rewrite the registry by hand and never reload, leaving the old
     interval, timeout and retry count in place until Home Assistant restarted.
     """
     entry = await _setup(hass)
-    coordinator = hass.data[DOMAIN][entry.entry_id]
-    assert coordinator.update_interval.total_seconds() == 60
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    assert runtime.coordinators[PRIORITY_FAST].update_interval.total_seconds() == 60
 
     hass.config_entries.async_update_entry(
-        entry, options={**entry.options, "scaninterval": 300}
+        entry,
+        options={**entry.options, CONF_SCANINTERVAL: 90, CONF_INTERVAL_MEDIUM: 600,
+                 CONF_INTERVAL_SLOW: 1800},
     )
     await hass.async_block_till_done()
 
-    assert hass.data[DOMAIN][entry.entry_id].update_interval.total_seconds() == 300
+    reloaded = hass.data[DOMAIN][entry.entry_id]
+    assert reloaded.coordinators[PRIORITY_FAST].update_interval.total_seconds() == 90
+    assert reloaded.coordinators[PRIORITY_MEDIUM].update_interval.total_seconds() == 600
+    assert reloaded.coordinators[PRIORITY_SLOW].update_interval.total_seconds() == 1800
 
 
 async def test_unload_removes_the_coordinator(hass):

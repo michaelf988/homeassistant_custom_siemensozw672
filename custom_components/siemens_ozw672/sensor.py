@@ -40,10 +40,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
     if not platform_enabled(entry, SENSOR):
         _LOGGER.debug("SENSOR - domain disabled in options, adding no entities")
         return
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    runtime = hass.data[DOMAIN][entry.entry_id]
 
     entities = []
     for dp_config in dp_configs_for_hatype(entry, "sensor"):
+        coordinator = runtime.coordinator_for(dp_config["priority"])
         data = (coordinator.data or {}).get(dp_config["Id"], {}).get("Data", {})
         unit = str(data.get("Unit", "")).strip()
         _LOGGER.debug(f"SENSOR Adding Entity with config: {dp_config}")

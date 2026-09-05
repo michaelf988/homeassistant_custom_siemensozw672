@@ -40,6 +40,34 @@ Sensors Supported
 ![example][exampleimg]
 
 
+## Polling priorities
+
+The OZW672 reads exactly one datapoint per HTTP request, and it is a small embedded web
+server. Polling 60 datapoints every minute means 60 requests a minute, which is what
+makes a large selection slow and, on a busy plant, unreliable.
+
+Every datapoint is therefore assigned to one of three polling tiers:
+
+| Tier | Default interval | Typical use |
+| --- | --- | --- |
+| Priority 1 - fast | 60 s | Flow temperature, burner state - anything an automation reacts to |
+| Priority 2 - medium | 300 s | Setpoints, operating modes |
+| Priority 3 - slow | 900 s | Meter readings, diagnostics, anything you only look at |
+
+The last step of the setup wizard asks which datapoints belong in the fast and medium
+tiers. **Anything you do not pick stays in the slow tier**, so the gentlest configuration
+for the device is also the one that needs no clicks.
+
+Each tier is polled by its own coordinator with its own interval, and a tier with no
+datapoints is never polled at all. All three share one connection and one lock, so the
+device never sees two requests at once. If it still struggles, raise
+*Pause between requests* in the options.
+
+To change the assignment later, open the integration's options and choose
+*Which datapoints are polled how often*. Config entries created before this existed are
+migrated into the medium tier.
+
+
 ## Disclaimer
 
 **This is an independent, unofficial, community-developed project. It is not affiliated

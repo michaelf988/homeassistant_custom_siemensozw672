@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 
 from .const import (
     CONF_DATAPOINTS,
+    CONF_PRIORITY,
     CONF_DEVICE,
     CONF_DEVICE_LONGNAME,
     CONF_PREFIX_FUNCTION,
@@ -20,7 +21,9 @@ from .const import (
     CONF_USE_DEVICE_LONGNAME,
     DEFAULT_PREFIX_FUNCTION,
     DEFAULT_PREFIX_OPLINE,
+    DEFAULT_PRIORITY,
     DEFAULT_USE_DEVICE_LONGNAME,
+    PRIORITIES,
 )
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
@@ -182,6 +185,31 @@ def datapoint_identifier(datapoint: dict) -> str:
     return "00" + str(datapoint.get("Id", ""))
 
 
+def datapoint_priority(datapoint: dict) -> str:
+    """The polling tier this datapoint belongs to.
+
+    Datapoints stored before priorities existed carry no Priority at all, and a
+    hand-edited entry could carry nonsense, so anything unrecognised falls back to
+    the middle tier rather than dropping the datapoint.
+    """
+    priority = (datapoint or {}).get(CONF_PRIORITY)
+    if priority in PRIORITIES:
+        return priority
+    return DEFAULT_PRIORITY
+
+
+def group_datapoints_by_priority(entry: ConfigEntry) -> dict[str, list[dict]]:
+    """Split the configured datapoints into one list per polling tier.
+
+    Tiers with no datapoints are left out entirely, so no coordinator is created
+    for them and the device is never polled for an empty list.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for datapoint in entry.data.get(CONF_DATAPOINTS) or []:
+        grouped.setdefault(datapoint_priority(datapoint), []).append(datapoint)
+    return grouped
+
+
 def build_dp_configs(entry: ConfigEntry) -> list[dict]:
     """Return the runtime config for every configured datapoint.
 
@@ -202,6 +230,7 @@ def build_dp_configs(entry: ConfigEntry) -> list[dict]:
         dp_config["device_id"] = entry.entry_id
         dp_config["device_name"] = name
         dp_config["device_model"] = model
+        dp_config["priority"] = datapoint_priority(datapoint)
 
         prefix = ""
         if prefix_function:

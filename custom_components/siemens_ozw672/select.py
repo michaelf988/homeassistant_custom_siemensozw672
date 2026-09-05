@@ -19,10 +19,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
     if not platform_enabled(entry, SELECT):
         _LOGGER.debug("SELECT - domain disabled in options, adding no entities")
         return
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    runtime = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        SiemensOzw672SelectControl(coordinator, dp_config)
+        SiemensOzw672SelectControl(runtime.coordinator_for(dp_config["priority"]), dp_config)
         for dp_config in dp_configs_for_hatype(entry, "select")
     ]
     _LOGGER.debug(f"SELECT Adding {len(entities)} entities")

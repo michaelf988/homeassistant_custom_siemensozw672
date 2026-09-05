@@ -19,10 +19,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
     if not platform_enabled(entry, SWITCH):
         _LOGGER.debug("SWITCH - domain disabled in options, adding no entities")
         return
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    runtime = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        SiemensOzw672BinarySwitch(coordinator, dp_config)
+        SiemensOzw672BinarySwitch(runtime.coordinator_for(dp_config["priority"]), dp_config)
         for dp_config in dp_configs_for_hatype(entry, "switch")
     ]
     _LOGGER.debug(f"SWITCH Adding {len(entities)} entities")

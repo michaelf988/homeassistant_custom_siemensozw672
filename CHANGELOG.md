@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **Three polling priorities.** The OZW672 reads one datapoint per HTTP request, so
+  polling everything at the same rate is what makes a large selection painful on a
+  device this small. Every datapoint is now assigned to one of three tiers, each with
+  its own coordinator and its own interval:
+
+  | Tier | Default | Option |
+  | --- | --- | --- |
+  | Priority 1 - fast | 60 s | `scaninterval` |
+  | Priority 2 - medium | 300 s | `interval_medium` |
+  | Priority 3 - slow | 900 s | `interval_slow` |
+
+  The config flow ends on a new step that sorts the selected datapoints into the fast
+  and medium tiers; anything left unpicked stays in the slow tier, so the gentlest
+  configuration takes zero clicks. A tier with no datapoints gets no coordinator at all.
+- **Priorities can be changed later.** The options dialog now opens on a menu: one
+  branch for connection settings and the three intervals, one for re-assigning
+  datapoints to tiers without redoing discovery.
+- **A configurable pause between requests** (`request_delay`, default 0 s) for a
+  controller that struggles under a long poll. All requests already go through a single
+  lock, so the three coordinators never talk to the device in parallel.
+
+### Changed
+
+- **Migration is incremental.** Every version bump used to re-read every datapoint
+  description from the device - a long, blocking stall at startup for a large
+  selection. Each step now runs on its own, and the new 1.5 -> 1.6 step (assigning
+  priorities) contacts the device not at all.
+- **Existing datapoints migrate to the medium tier (5 minutes).** That is an immediate
+  reduction in load compared with the old flat 60-second poll. Raise the few you need
+  to be current under the integration's options.
+- The config flow reads its schema version from `const.py`. It was hard-coded to 5
+  while `const` moved on, so a freshly created entry was immediately considered out of
+  date and re-migrated on the next start.
+
 ## 0.4.0
 
 ### Fixed
