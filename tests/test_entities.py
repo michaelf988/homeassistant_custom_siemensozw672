@@ -46,6 +46,8 @@ def _dp(id, opline, name, dptype, hatype, priority=PRIORITY_MEDIUM, **descr):
     }
 
 
+ENTRY_ID = "entity_entry"
+
 DATAPOINTS = [
     _dp("1960", "39", "Outside temp", "Numeric", "sensor", priority=PRIORITY_FAST, DecimalDigits="1"),
     # The device reports "----" for this one: no reading at all.
@@ -71,7 +73,7 @@ def _entry(hass, datapoints=None, options=None):
         domain=DOMAIN,
         version=CONF_VERSION,
         minor_version=CONF_MINOR_VERSION,
-        entry_id="entity_entry",
+        entry_id=ENTRY_ID,
         title="RVS43",
         data={
             CONF_HOST: "test",
@@ -100,17 +102,48 @@ async def _setup(hass, **kwargs):
     return entry
 
 
+def _entity_id(hass, domain, opline):
+    """Look an entity up by its unique id rather than guessing its entity_id.
+
+    Home Assistant decides entity_id naming itself and has changed it: from
+    2026.8 an entity attached to a device is prefixed with the device name
+    ("sensor.rvs43_outside_temp", not "sensor.outside_temp"). The unique id is
+    ours, so that is what the tests key on.
+    """
+    return er.async_get(hass).async_get_entity_id(
+        domain, DOMAIN, f"{ENTRY_ID}_{opline}"
+    )
+
+
+def _state(hass, domain, opline):
+    """The state object of the entity for one datapoint, or None if it has none."""
+    entity_id = _entity_id(hass, domain, opline)
+    return hass.states.get(entity_id) if entity_id else None
+
+
+# Operating line numbers of the fixture datapoints, which are also their unique
+# id suffixes.
+OUTSIDE_TEMP = "39"
+FLOW_TEMP = "44"
+ENERGY_TOTAL = "40"
+ENERGY_SETPOINT = "41"
+DHW_SETPOINT = "3516"
+DHW_MODE = "3514"
+DHW_RELEASE = "3522"
+PUMP = "5328"
+
+
 async def test_every_platform_produces_its_entities(hass):
     """One datapoint of each shape ends up in the right domain."""
     await _setup(hass)
 
-    assert hass.states.get("sensor.outside_temp") is not None
-    assert hass.states.get("sensor.energy_total") is not None
-    assert hass.states.get("number.energy_setpoint") is not None
-    assert hass.states.get("number.dhw_setpoint") is not None
-    assert hass.states.get("switch.dhw_operating_mode") is not None
-    assert hass.states.get("select.dhw_release") is not None
-    assert hass.states.get("binary_sensor.heat_circuit_pump_1") is not None
+    assert _state(hass, "sensor", OUTSIDE_TEMP) is not None
+    assert _state(hass, "sensor", ENERGY_TOTAL) is not None
+    assert _state(hass, "number", ENERGY_SETPOINT) is not None
+    assert _state(hass, "number", DHW_SETPOINT) is not None
+    assert _state(hass, "switch", DHW_MODE) is not None
+    assert _state(hass, "select", DHW_RELEASE) is not None
+    assert _state(hass, "binary_sensor", PUMP) is not None
 
 
 async def test_writeable_energy_entity_renders(hass):
@@ -121,7 +154,7 @@ async def test_writeable_energy_entity_renders(hass):
     """
     await _setup(hass)
 
-    state = hass.states.get("number.energy_setpoint")
+    state = _state(hass, "number", ENERGY_SETPOINT)
     assert state.state == "120.0"
     assert state.attributes["icon"] == "mdi:lightning-bolt"
     assert state.attributes["unit_of_measurement"] == "kWh"
@@ -132,14 +165,14 @@ async def test_decimals_are_not_truncated(hass):
     """A reading of " 15.8" stays 15.8 rather than being truncated to 15."""
     assert (await _setup(hass)) is not None
 
-    assert hass.states.get("sensor.outside_temp").state == "15.8"
+    assert _state(hass, "sensor", OUTSIDE_TEMP).state == "15.8"
 
 
 async def test_missing_reading_is_unknown_not_zero(hass):
     """The device's "----" sentinel must not be recorded as a real zero."""
     await _setup(hass)
 
-    assert hass.states.get("sensor.flow_temp").state == "unknown"
+    assert _state(hass, "sensor", FLOW_TEMP).state == "unknown"
 
 
 async def test_descriptions_without_min_max_do_not_break_number_entities(hass):
@@ -151,7 +184,7 @@ async def test_descriptions_without_min_max_do_not_break_number_entities(hass):
 
     await _setup(hass, datapoints=datapoints)
 
-    state = hass.states.get("number.dhw_setpoint")
+    state = _state(hass, "number", DHW_SETPOINT)
     assert state.state == "52.0"
     assert state.attributes["min"] == 0.0
     assert state.attributes["max"] == 100.0
@@ -162,7 +195,7 @@ async def test_select_options_come_from_the_description(hass):
     """The enum list drives the options and the current value is one of them."""
     await _setup(hass)
 
-    state = hass.states.get("select.dhw_release")
+    state = _state(hass, "select", DHW_RELEASE)
     assert state.state == "24h/day"
     assert state.attributes["options"] == [
         "24h/day", "Heating programs with forward shift", "Time switch program 4",
@@ -178,7 +211,7 @@ async def test_select_without_enums_does_not_raise(hass):
 
     await _setup(hass, datapoints=datapoints)
 
-    state = hass.states.get("select.dhw_release")
+    state = _state(hass, "select", DHW_RELEASE)
     assert state.attributes["options"] == []
     # The reported value is not a known option, so it is not claimed as the state.
     assert state.state == "unknown"
@@ -188,8 +221,8 @@ async def test_disabled_domain_creates_no_entities(hass):
     """The five domain toggles were stored in the options and never read."""
     await _setup(hass, options={"switch": False})
 
-    assert hass.states.get("switch.dhw_operating_mode") is None
-    assert hass.states.get("sensor.outside_temp") is not None
+    assert _entity_id(hass, "switch", DHW_MODE) is None
+    assert _state(hass, "sensor", OUTSIDE_TEMP) is not None
 
 
 async def test_entities_do_not_write_back_into_the_config_entry(hass):
@@ -206,8 +239,9 @@ async def test_unique_ids_use_the_operating_line(hass):
     await _setup(hass)
 
     registry = er.async_get(hass)
-    entity = registry.async_get("sensor.outside_temp")
-    assert entity.unique_id == "entity_entry_39"
+    entity_id = _entity_id(hass, "sensor", OUTSIDE_TEMP)
+    assert entity_id is not None
+    assert registry.async_get(entity_id).unique_id == f"{ENTRY_ID}_{OUTSIDE_TEMP}"
 
 
 async def test_one_coordinator_per_populated_tier(hass):
@@ -244,8 +278,8 @@ async def test_each_entity_binds_to_its_own_tier(hass):
     assert set(runtime.coordinators[PRIORITY_FAST].data) == {"1960"}
     assert "1961" in runtime.coordinators[PRIORITY_SLOW].data
     # ... and both entities still resolve their value.
-    assert hass.states.get("sensor.outside_temp").state == "15.8"
-    assert hass.states.get("sensor.energy_total").state == "15.0"
+    assert _state(hass, "sensor", OUTSIDE_TEMP).state == "15.8"
+    assert _state(hass, "sensor", ENERGY_TOTAL).state == "15.0"
 
 
 async def test_changing_intervals_reloads_the_entry(hass):

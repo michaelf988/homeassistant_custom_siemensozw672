@@ -2,12 +2,7 @@
 # core version (and pulls in pytest/pytest-asyncio). Leaving it unpinned means the HA
 # version under test drifts silently between runs.
 #
-# 0.13.299 -> Home Assistant 2025.12.1, requires Python 3.13.
-# To move to a newer Home Assistant, raise this pin and the python-version in
-# .github/workflows/validate.yml together - each release of this package requires a
-# specific minimum Python, and CI fails loudly if the two disagree.
-pytest-homeassistant-custom-component==0.13.299
-
-# aiodns 3.5 calls into pycares APIs that pycares 5 removed, which breaks the aiohttp
-# import before any test runs.
-pycares==4.9.0
+# 0.13.357 -> Home Assistant 2026.8.3, requires Python 3.14.
+# Each release of this package requires a specific minimum Python, so raise this pin and
+# the python-version in .github/workflows/validate.yml together.
+pytest-homeassistant-custom-component==0.13.357

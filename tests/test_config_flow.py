@@ -4,6 +4,8 @@ Nothing covered the flow before. It now ends on a priority step, because polling
 every selected datapoint at the same rate is what makes a large selection painful
 on a controller this small.
 """
+from unittest.mock import patch
+
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.siemens_ozw672.const import (
@@ -132,13 +134,22 @@ async def test_picking_nothing_leaves_everything_in_the_slow_tier(hass):
 
 
 async def test_bad_credentials_do_not_advance(hass):
-    """A device that rejects the login keeps the user on the first form."""
+    """A device that rejects the login keeps the user on the first form.
+
+    The login is patched rather than pointed at an unroutable address: Home
+    Assistant's test harness blocks real socket use, so the address version of
+    this test failed on the socket rather than on the credentials.
+    """
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_PROTOCOL: "http", CONF_HOST: "192.0.2.1",
-         CONF_USERNAME: "user", CONF_PASSWORD: "pass"},
-    )
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
+        return_value=False,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_PROTOCOL: "http", CONF_HOST: "ozw.example",
+             CONF_USERNAME: "user", CONF_PASSWORD: "wrong"},
+        )
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"

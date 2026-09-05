@@ -60,10 +60,13 @@
   `pyproject.toml` and hard-fails when it finds neither. All four are now covered by
   local tests, so the next one costs two seconds instead of a round trip through
   GitHub Actions.
-- `requirements_test.txt` pins the Home Assistant version the suite is actually verified
-  against (2025.12.1 on Python 3.13) and documents how to move it, and pins `pycares`,
-  whose version 5 removed APIs `aiodns` still calls - which breaks the aiohttp import
-  before any test runs.
+- `requirements_test.txt` pins the Home Assistant version the suite is verified against -
+  **2026.8.3 on Python 3.14** - and documents that the pin and CI's `python-version` move
+  together.
+- The entity tests no longer hard-code entity ids. Home Assistant decides that naming
+  itself and changed it in 2026.8: an entity attached to a device is now prefixed with
+  the device name (`sensor.rvs43_outside_temp`, not `sensor.outside_temp`). The tests key
+  on our own unique ids instead, and pass unchanged on both 2025.12 and 2026.8.
 
 ## 0.4.0
 
