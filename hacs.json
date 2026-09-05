@@ -9,5 +9,7 @@
     "select"
   ],
   "iot_class": "Local Polling",
-  "homeassistant": "2024.11.0"
+  "homeassistant": "2024.11.0",
+  "zip_release": true,
+  "filename": "siemens_ozw672.zip"
 }

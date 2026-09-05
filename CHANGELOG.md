@@ -38,6 +38,25 @@
   while `const` moved on, so a freshly created entry was immediately considered out of
   date and re-migrated on the next start.
 
+### Infrastructure
+
+- **Continuous integration.** The repository had no CI at all. Every push and pull
+  request now runs Home Assistant's `hassfest`, the HACS validation and the full test
+  suite, plus a weekly scheduled run so a break in Home Assistant's own checks surfaces
+  before a release does.
+- **Releases are built and published automatically.** Publishing a GitHub release builds
+  `siemens_ozw672.zip` from the integration folder and attaches it; `hacs.json` sets
+  `zip_release`, so HACS installs that archive instead of cloning the repository. The
+  workflow refuses a tag that disagrees with `manifest.json`.
+- `scripts/set_version.py` sets the version in both places that carry it, and a test
+  checks that `manifest.json`, `const.VERSION`, the changelog heading and the config
+  flow's schema version all agree. It immediately caught `manifest.json` still sitting
+  at 0.4.0 while `const.py` had moved to 0.5.0.
+- `requirements_test.txt` pins the Home Assistant version the suite is actually verified
+  against (2025.12.1 on Python 3.13) and documents how to move it, and pins `pycares`,
+  whose version 5 removed APIs `aiodns` still calls - which breaks the aiohttp import
+  before any test runs.
+
 ## 0.4.0
 
 ### Fixed

@@ -68,6 +68,24 @@ To change the assignment later, open the integration's options and choose
 migrated into the medium tier.
 
 
+## Releasing
+
+The version lives in `manifest.json` and `const.py`, and the release workflow refuses a
+tag that disagrees with the manifest. To cut a release:
+
+1. `python scripts/set_version.py 0.6.0`
+2. Add the matching `## 0.6.0` section to `CHANGELOG.md`.
+3. Commit and push. CI runs hassfest, the HACS validation and the test suite.
+4. Publish a GitHub release tagged `v0.6.0` (or `0.6.0`).
+
+The workflow then builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`
+and attaches it to the release. `hacs.json` sets `zip_release`, so HACS installs that
+archive rather than cloning the repository.
+
+A test guards the whole chain: `manifest.json`, `const.VERSION`, the changelog heading
+and the config flow's schema version all have to agree before anything is tagged.
+
+
 ## Disclaimer
 
 **This is an independent, unofficial, community-developed project. It is not affiliated
