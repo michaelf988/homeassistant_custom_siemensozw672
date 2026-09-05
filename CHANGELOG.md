@@ -52,6 +52,14 @@
   checks that `manifest.json`, `const.VERSION`, the changelog heading and the config
   flow's schema version all agree. It immediately caught `manifest.json` still sitting
   at 0.4.0 while `const.py` had moved to 0.5.0.
+- The first CI run failed all three jobs, which is what CI is for. Fixed: `hacs.json`
+  still carried `domains` and `iot_class`, which HACS now rejects outright; the setup
+  step's description contained a URL, which hassfest forbids in translation strings;
+  the integration implements `async_setup` without declaring a `CONFIG_SCHEMA`; and
+  `actions/setup-python`'s pip cache only looks for `requirements.txt` or
+  `pyproject.toml` and hard-fails when it finds neither. All four are now covered by
+  local tests, so the next one costs two seconds instead of a round trip through
+  GitHub Actions.
 - `requirements_test.txt` pins the Home Assistant version the suite is actually verified
   against (2025.12.1 on Python 3.13) and documents how to move it, and pins `pycares`,
   whose version 5 removed APIs `aiodns` still calls - which breaks the aiohttp import

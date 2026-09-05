@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -50,6 +51,11 @@ from .const import STARTUP_MESSAGE
 from .helpers import group_datapoints_by_priority, option_int
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
+
+# This integration is configured entirely through the UI. Declaring that explicitly
+# is what hassfest asks for from anything that implements async_setup(), and it makes
+# Home Assistant reject a stray YAML block instead of silently ignoring it.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType):

@@ -39,6 +39,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+          # The cache only looks for requirements.txt/pyproject.toml by default and
+          # hard-fails when it finds neither.
+          cache-dependency-path: requirements_test.txt
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
