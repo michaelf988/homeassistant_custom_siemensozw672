@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Siemens OZW672",
-        "description": "If you need help with the configuration have a look here: https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672\nNOTE: If you require HTTP, please ensure it is enabled in the device:\n Home > 0.x OZW672.xx > Settings > Communication > Services",
+        "description": "Enter the address and credentials of your OZW672.\nIf you need HTTP rather than HTTPS, enable it on the device first under Home > 0.x OZW672.xx > Settings > Communication > Services.\nSetup instructions are linked from the integration's documentation.",
         "data": {
           "hostname": "Hostname/IP",
           "protocol": "Protocol: http/https",
@@ -36,6 +36,14 @@
           "menuitems": "Select one or more Submenu Items",
           "datapoints": "Select one or more Data Points"
         }
+      },
+      "priorities": {
+        "title": "Siemens OZW672 - Polling priorities",
+        "description": "The OZW672 reads one datapoint per HTTP request, so polling everything at the same rate is what makes a large selection slow. Pick the {count} selected datapoints that need to be current.\n\nAnything you do not pick here is polled in the slowest tier.",
+        "data": {
+          "priority_fast": "Poll frequently (priority 1)",
+          "priority_medium": "Poll at a medium rate (priority 2)"
+        }
       }
     },
     "error": {
@@ -45,12 +53,21 @@
       "timeout": "Timeout connecting to the device."
     },
     "abort": {
-      "single_instance_allowed": "Only a single instance is allowed."
+      "single_instance_allowed": "Only a single instance is allowed.",
+      "reconfigure_successful": "The existing OZW672 device was updated with your new selection.",
+      "no_menu_items": "No menu items were selected, so there is nothing to configure."
     }
   },
   "options": {
     "step": {
-      "user": {
+      "init": {
+        "title": "Siemens OZW672",
+        "menu_options": {
+          "settings": "Connection, polling intervals and entity domains",
+          "priorities": "Which datapoints are polled how often"
+        }
+      },
+      "settings": {
         "data": {
           "binary_sensor": "Binary sensor domain enabled",
           "sensor": "Sensor domain enabled",
@@ -59,8 +76,21 @@
           "number": "Number domain enabled",
           "httptimeout": "HTTP Timeout (sec)",
           "httpretries": "HTTP Retries",
-          "scaninterval": "Polling Interval (sec)",
-          "use_device_longname": "Use the Device Addr+Type instead of the DeviceName"
+          "scaninterval": "Polling interval, priority 1 - fast (sec)",
+          "use_device_longname": "Use the Device Addr+Type instead of the DeviceName",
+          "verify_ssl": "Verify the HTTPS certificate (leave off for the device's self-signed certificate)",
+          "interval_medium": "Polling interval, priority 2 - medium (sec)",
+          "interval_slow": "Polling interval, priority 3 - slow (sec)",
+          "request_delay": "Pause between requests (sec, 0 = none)"
+        },
+        "title": "Siemens OZW672 - Settings"
+      },
+      "priorities": {
+        "title": "Siemens OZW672 - Polling priorities",
+        "description": "Sort the {count} configured datapoints into polling tiers. Anything you do not pick is polled in the slowest tier.",
+        "data": {
+          "priority_fast": "Poll frequently (priority 1)",
+          "priority_medium": "Poll at a medium rate (priority 2)"
         }
       }
     }

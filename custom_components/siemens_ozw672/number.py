@@ -1,388 +1,180 @@
-"""SelectEntity platform for Siemens OZW672."""
-from .const import DEFAULT_NAME
-from .const import DOMAIN
-from .const import ICON
-from .const import ICON_THERMOMETER
-from .const import ICON_PERCENT
-from .const import ICON_NUMERIC
-from .const import SENSOR
-from .const import CONF_MENUITEMS
-from .const import CONF_DATAPOINTS
-from .const import CONF_PREFIX_FUNCTION
-from .const import CONF_PREFIX_OPLINE
+"""Number platform for Siemens OZW672."""
+import logging
 
-from .entity import SiemensOzw672Entity
-from homeassistant.helpers.entity import Entity
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from homeassistant.components.number import NumberEntity, NumberMode, NumberDeviceClass
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
-
+from homeassistant.components.number import NumberDeviceClass, NumberEntity
 from homeassistant.const import (
     PERCENTAGE,
-    UnitOfTemperature
+    UnitOfTemperature,
 )
+from homeassistant.exceptions import HomeAssistantError
 
-import logging
+from .api import SiemensOzw672ApiError
+from .const import DOMAIN
+from .const import ICON_NUMERIC
+from .const import ICON_PERCENT
+from .const import ICON_POWER
+from .const import ICON_THERMOMETER
+from .const import NUMBER
+from .entity import SiemensOzw672Entity
+from .helpers import (
+    decimal_digits,
+    descr_float,
+    dp_configs_for_hatype,
+    parse_numeric,
+    platform_enabled,
+)
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
+TEMPERATURE_UNITS = {
+    "°C": UnitOfTemperature.CELSIUS,
+    "°F": UnitOfTemperature.FAHRENHEIT,
+    "K": UnitOfTemperature.KELVIN,
+}
+
+# Fallbacks for datapoints whose description does not carry Min/Max/Resolution.
+# These used to be subscripted directly, so a description without them raised
+# KeyError inside the entity properties.
+DEFAULT_MIN = 0.0
+DEFAULT_MAX = 100.0
+DEFAULT_STEP = 1.0
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup number platform."""
-    _LOGGER.debug(f"NUMBER - Setup_Entry.  DATA: {hass.data[DOMAIN]}")  
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    if not platform_enabled(entry, NUMBER):
+        _LOGGER.debug("NUMBER - domain disabled in options, adding no entities")
+        return
+    runtime = hass.data[DOMAIN][entry.entry_id]
 
-    datapoints = coordinator.data
-    # Add sensors
-    entities=[]
-    for item in datapoints:
-        _LOGGER.debug(f"NUMBER Data Point Item: {datapoints[item]}")
-        # Reset per datapoint so a non-matching item cannot reuse the previous config.
-        dp_config=None
-        for dp_data in entry.data["datapoints"]:
-            if dp_data["Id"] == item :
-                dp_config=dp_data
-                if int(dp_data["OpLine"]) > 1:
-                    identifier = dp_data["OpLine"] 
-                else:
-                    identifier="00"+item
-                ### Will use the OpLine as the identifier if it exists. If not - we will use the API ID.  
-                #   Note: the API datapoint ID can change if the tree is re-created.  
-                #   I am hoping that by using the OpLine as the identifier - we will avoid duplicate sensors
-                dp_config.update({'entry_id': entry.entry_id + "_" + identifier})  
-                dp_config.update({'device_id': entry.entry_id})
-                dp_config.update({'device_name': entry.data["devicename"]})
-                prefix=""
-                if entry.data[CONF_PREFIX_FUNCTION] == True: prefix=f'{dp_data["MenuItem"]} - '
-                if entry.data[CONF_PREFIX_OPLINE] == True: prefix=prefix + f'{dp_data["OpLine"]} '
-                dp_config.update({'entity_prefix': prefix})
-                break
-        # At this point - the config for the datapoint is in dp_config
-        #               - the data is in dp_data
-        if dp_config is not None:
-            if dp_config["DPDescr"]["HAType"] == "number":
-                _LOGGER.debug(f"NUMBER Adding Entity with config: {dp_config} and data: {dp_data}")          
-                if datapoints[item]["Data"]["Unit"] in ['°C', '°F', 'K']:
-                    entities.append(dp_config)
-                    async_add_entities([SiemensOzw672TempControl(coordinator,dp_config)])
-                elif datapoints[item]["Data"]["Unit"] in ['%']:
-                    entities.append(dp_config)
-                    async_add_entities([SiemensOzw672PercentControl(coordinator,dp_config)])
-                elif datapoints[item]["Data"]["Unit"] in ['kWh', 'Wh', 'kW', 'W']:
-                    entities.append(dp_config)
-                    async_add_entities([SiemensOzw672EnergyControl(coordinator,dp_config)])
-                elif datapoints[item]["Data"]["Type"] == "Numeric":
-                    entities.append(dp_config)
-                    async_add_entities([SiemensOzw672NumberControl(coordinator,dp_config)])
-                else:
-                    continue
-            
-
-class SiemensOzw672TempControl(SiemensOzw672Entity,NumberEntity):
-
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        _LOGGER.debug(f"SiemensOzw672TempControl: Config: {self.config_entry}")
-        return f'{self.config_entry["entity_prefix"]}{self.config_entry["Name"]}'
-
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Update Temp ."""
-        _LOGGER.debug(f'SiemensOzw672TempControl: Set_native_Value: {value}')
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        existing_value=self.coordinator.data[item]["Data"]["Value"].strip()
-        decimals=self.config_entry["DPDescr"]["DecimalDigits"]
-        if decimals == '0':
-            new_value=round(float(value))
+    entities = []
+    for dp_config in dp_configs_for_hatype(entry, "number"):
+        coordinator = runtime.coordinator_for(dp_config["priority"])
+        data = (coordinator.data or {}).get(dp_config["Id"], {}).get("Data", {})
+        unit = str(data.get("Unit", "")).strip()
+        _LOGGER.debug(f"NUMBER Adding Entity with config: {dp_config}")
+        if unit in TEMPERATURE_UNITS:
+            entities.append(SiemensOzw672TempControl(coordinator, dp_config))
+        elif unit == "%":
+            entities.append(SiemensOzw672PercentControl(coordinator, dp_config))
+        elif unit in ("kWh", "Wh", "kW", "W"):
+            entities.append(SiemensOzw672EnergyControl(coordinator, dp_config))
         else:
-            new_value=round(float(value), int(decimals))
-        _LOGGER.info(f'SiemensOzw672TempControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {str(new_value)} from Value: {str(existing_value)}')
-        output = await self.coordinator.api.async_write_data(self.config_entry,str(new_value))
-        await self.coordinator._async_update_data_forid(item)
-        await self.coordinator.async_request_refresh()
-        return 
+            entities.append(SiemensOzw672NumberControl(coordinator, dp_config))
+
+    async_add_entities(entities)
+
+
+class SiemensOzw672NumberControlBase(SiemensOzw672Entity, NumberEntity):
+    """Shared behaviour for the writeable numeric datapoints.
+
+    Note there is deliberately no `state` property here. Overriding it on a
+    NumberEntity bypasses Home Assistant's own unit handling, and the old
+    implementation did an unguarded float() that raised ValueError for any
+    non-numeric reading.
+    """
 
     @property
     def native_value(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
+        """Return the reading, or None when the device reports no data."""
+        return parse_numeric(self._dp_data.get("Value"))
 
     @property
-    def icon(self):
-        """Return the icon of the sensor."""
-        return ICON_THERMOMETER
+    def suggested_display_precision(self):
+        """Decimal places to display, taken from the datapoint description."""
+        return decimal_digits(self.config_entry)
 
-    @property
-    def device_class(self):
-        """Return de device class of the sensor."""
-        return NumberDeviceClass.TEMPERATURE
-    
     @property
     def native_min_value(self) -> float:
-        """Return min Temp."""
-        val = float(self.config_entry["DPDescr"]["Min"])
-        return val
+        """Return the lowest value the OZW672 accepts for this datapoint."""
+        return descr_float(self.config_entry, "Min", DEFAULT_MIN)
 
     @property
     def native_max_value(self) -> float:
-        """Return max Temp."""
-        val = float(self.config_entry["DPDescr"]["Max"])
-        return val
+        """Return the highest value the OZW672 accepts for this datapoint."""
+        return descr_float(self.config_entry, "Max", DEFAULT_MAX)
 
     @property
     def native_step(self) -> float:
         """Return step/resolution."""
-        val = float(self.config_entry["DPDescr"]["Resolution"])
-        return val
+        step = descr_float(self.config_entry, "Resolution", DEFAULT_STEP)
+        # A resolution of 0 would make Home Assistant's step arithmetic divide by
+        # zero; the device reports it for datapoints it does not constrain.
+        return step if step and step > 0 else DEFAULT_STEP
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Round to the datapoint's precision and write it to the OZW672."""
+        item = self.config_entry["Id"]
+        opline = self.config_entry["OpLine"]
+        name = self.config_entry["Name"]
+        existing_value = self._raw_value
+
+        decimals = decimal_digits(self.config_entry)
+        if decimals is None or decimals <= 0:
+            new_value = round(float(value))
+        else:
+            new_value = round(float(value), decimals)
+
+        _LOGGER.info(
+            f'{type(self).__name__} - Will update ID/Opline/Name: {item}/{opline}/{name} '
+            f'to Value: {new_value} from Value: {existing_value}'
+        )
+        try:
+            await self.coordinator.api.async_write_data(self.config_entry, str(new_value))
+        except SiemensOzw672ApiError as exception:
+            raise HomeAssistantError(
+                f"Could not write {name} on the OZW672: {exception}"
+            ) from exception
+        await self.coordinator.async_request_refresh()
+
+
+class SiemensOzw672TempControl(SiemensOzw672NumberControlBase):
+
+    _attr_icon = ICON_THERMOMETER
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
 
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Unit"].strip()
-        if data == "°C":
-            return UnitOfTemperature.CELSIUS
-        elif data == "°F":
-            return UnitOfTemperature.FAHRENHEIT
-        elif data == "K":
-            return UnitOfTemperature.KELVIN
-        else:
-            return UnitOfTemperature.CELSIUS
+        return TEMPERATURE_UNITS.get(self._raw_unit, UnitOfTemperature.CELSIUS)
 
 
-class SiemensOzw672PercentControl(SiemensOzw672Entity, NumberEntity):
+class SiemensOzw672PercentControl(SiemensOzw672NumberControlBase):
 
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        _LOGGER.debug(f"SiemensOzw672PercentControl: Config: {self.config_entry}")
-        return f'{self.config_entry["entity_prefix"]}{self.config_entry["Name"]}'
+    _attr_icon = ICON_PERCENT
+    _attr_native_unit_of_measurement = PERCENTAGE
 
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
 
-    async def async_set_native_value(self, value: float) -> None:
-        """Update The Percentage ."""
-        _LOGGER.debug(f'SiemensOzw672PercentControl: Set_native_Value: {value}')
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        existing_value=self.coordinator.data[item]["Data"]["Value"].strip()
-        decimals=self.config_entry["DPDescr"]["DecimalDigits"]
-        if decimals == '0':
-            new_value=round(float(value))
-        else:
-            new_value=round(float(value), int(decimals))
-        _LOGGER.info(f'SiemensOzw672PercentControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {str(new_value)} from Value: {str(existing_value)}')
-        output = await self.coordinator.api.async_write_data(self.config_entry,str(new_value))
-        await self.coordinator._async_update_data_forid(item)
-        await self.coordinator.async_request_refresh()
-        return 
+class SiemensOzw672EnergyControl(SiemensOzw672NumberControlBase):
+    """A writeable energy or power datapoint - typically a meter reading.
+
+    This class used to reference ICON_POWER without importing it (NameError on
+    every state read) and set SensorDeviceClass.ENERGY plus a state_class, neither
+    of which belongs to the number domain.
+    """
+
+    _attr_icon = ICON_POWER
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
-
-    @property
-    def icon(self):
-        """Return the icon of the sensor."""
-        return ICON_PERCENT
-
-    #@property
-    #def device_class(self):
-    #    """Return de device class of the sensor."""
-    #    return NumberDeviceClass.PERCENTAGE
-
-    @property
-    def native_min_value(self) -> float:
-        """Return min Temp."""
-        val = float(self.config_entry["DPDescr"]["Min"])
-        return val
-
-    @property
-    def native_max_value(self) -> float:
-        """Return max Temp."""
-        val = float(self.config_entry["DPDescr"]["Max"])
-        return val
-
-    @property
-    def native_step(self) -> float:
-        """Return step/resolution."""
-        val = float(self.config_entry["DPDescr"]["Resolution"])
-        return val
-
-    @property
-    def native_unit_of_measurement(self) -> str:
-        """Return percentage."""
-        return PERCENTAGE
-
-
-
-class SiemensOzw672EnergyControl(SiemensOzw672Entity,NumberEntity):
-
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        _LOGGER.debug(f"SiemensOzw672EnergyControl: Config: {self.config_entry}")
-        return f'{self.config_entry["entity_prefix"]}{self.config_entry["Name"]}'
-
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Update Temp ."""
-        _LOGGER.debug(f'SiemensOzw672EnergyControl: Set_native_Value: {value}')
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        existing_value=self.coordinator.data[item]["Data"]["Value"].strip()
-        decimals=self.config_entry["DPDescr"]["DecimalDigits"]
-        if decimals == '0':
-            new_value=round(float(value))
-        else:
-            new_value=round(float(value), int(decimals))
-        _LOGGER.info(f'SiemensOzw672EnergyControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {str(new_value)} from Value: {str(existing_value)}')
-        output = await self.coordinator.api.async_write_data(self.config_entry,str(new_value))
-        await self.coordinator._async_update_data_forid(item)
-        await self.coordinator.async_request_refresh()
-        return 
-
-    @property
-    def native_value(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
-
-    @property
-    def icon(self):
-        """Return the icon of the sensor."""
-        return ICON_POWER
-
-    @property
-    def device_class(self):
-        """Return de device class of the sensor."""
-        return SensorDeviceClass.ENERGY
-
-    @property
-    def state_class(self):
-        """Return de device class of the sensor."""
-        return SensorStateClass.TOTAL_INCREASING
-    
-    @property
-    def native_min_value(self) -> float:
-        """Return min Temp."""
-        val = float(self.config_entry["DPDescr"]["Min"])
-        return val
-
-    @property
-    def native_max_value(self) -> float:
-        """Return max Temp."""
-        val = float(self.config_entry["DPDescr"]["Max"])
-        return val
-
-    @property
-    def native_step(self) -> float:
-        """Return step/resolution."""
-        val = float(self.config_entry["DPDescr"]["Resolution"])
-        return val
+    def device_class(self) -> NumberDeviceClass | None:
+        """Energy and power have distinct number device classes."""
+        if self._raw_unit in ("kWh", "Wh"):
+            return NumberDeviceClass.ENERGY
+        if self._raw_unit in ("kW", "W"):
+            return NumberDeviceClass.POWER
+        return None
 
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        item=self.config_entry["Id"]
-        return self.coordinator.data[item]["Data"]["Unit"].strip()
+        return self._raw_unit or None
 
 
+class SiemensOzw672NumberControl(SiemensOzw672NumberControlBase):
 
-class SiemensOzw672NumberControl(SiemensOzw672Entity, NumberEntity):
-
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        _LOGGER.debug(f"SiemensOzw672NumberControl: Config: {self.config_entry}")
-        return f'{self.config_entry["entity_prefix"]}{self.config_entry["Name"]}'
+    _attr_icon = ICON_NUMERIC
 
     @property
-    def state(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Update The Percentage ."""
-        _LOGGER.debug(f'SiemensOzw672NumberControl: Set_native_Value: {value}')
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        existing_value=self.coordinator.data[item]["Data"]["Value"].strip()
-        decimals=self.config_entry["DPDescr"]["DecimalDigits"]
-        if decimals == '0':
-            new_value=round(float(value))
-        else:
-            new_value=round(float(value), int(decimals))
-        _LOGGER.info(f'SiemensOzw672NumberControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {str(new_value)} from Value: {str(existing_value)}')
-        output = await self.coordinator.api.async_write_data(self.config_entry,str(new_value))
-        await self.coordinator._async_update_data_forid(item)
-        await self.coordinator.async_request_refresh()
-        return 
-
-    @property
-    def native_value(self):
-        """Return the state of the sensor."""
-        item=self.config_entry["Id"]
-        data=self.coordinator.data[item]["Data"]["Value"].strip()
-        return float(data)
-
-    @property
-    def icon(self):
-        """Return the icon of the sensor."""
-        return ICON_NUMERIC
-
-    @property
-    def native_min_value(self) -> float:
-        """Return min Temp."""
-        val = float(self.config_entry["DPDescr"]["Min"])
-        return val
-
-    @property
-    def native_max_value(self) -> float:
-        """Return max Temp."""
-        val = float(self.config_entry["DPDescr"]["Max"])
-        return val
-
-    @property
-    def native_step(self) -> float:
-        """Return step/resolution."""
-        val = float(self.config_entry["DPDescr"]["Resolution"])
-        return val
-
-
+    def native_unit_of_measurement(self):
+        """Return whatever unit the device reports, if any."""
+        return self._raw_unit or None

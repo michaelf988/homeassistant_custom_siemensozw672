@@ -4,7 +4,6 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers import selector
-from datetime import timedelta
 
 from .api import SiemensOzw672ApiClient
 from .const import CONF_HOST
@@ -22,17 +21,39 @@ from .const import CONF_SCANINTERVAL
 from .const import CONF_HTTPTIMEOUT
 from .const import CONF_HTTPRETRIES
 from .const import DOMAIN
-from .const import PLATFORMS
 from .const import DEFAULT_HTTPTIMEOUT
 from .const import DEFAULT_HTTPRETRIES
 from .const import DEFAULT_SCANINTERVAL
-from .const import DEFAULT_PREFIX_FUNCTION
-from .const import DEFAULT_PREFIX_OPLINE
 from .const import DEFAULT_USE_DEVICE_LONGNAME
 from .const import DEFAULT_OPTIONS
 from .const import CONF_USE_DEVICE_LONGNAME
+from .const import CONF_VERIFY_SSL
+from .const import CONF_VERSION
+from .const import CONF_MINOR_VERSION
+from .const import CONF_PRIORITY
+from .const import CONF_PRIORITY_FAST
+from .const import CONF_PRIORITY_MEDIUM
+from .const import CONF_INTERVAL_MEDIUM
+from .const import CONF_INTERVAL_SLOW
+from .const import CONF_REQUEST_DELAY
+from .const import DEFAULT_INTERVAL_MEDIUM
+from .const import DEFAULT_INTERVAL_SLOW
+from .const import DEFAULT_REQUEST_DELAY
+from .const import MAX_REQUEST_DELAY
+from .const import PRIORITY_FAST
+from .const import PRIORITY_MEDIUM
+from .const import PRIORITY_SLOW
+from .const import DEFAULT_VERIFY_SSL
+from .const import MIN_SCANINTERVAL
+from .const import MAX_SCANINTERVAL
+from .const import MIN_HTTPTIMEOUT
+from .const import MAX_HTTPTIMEOUT
+from .const import MIN_HTTPRETRIES
+from .const import MAX_HTTPRETRIES
 
 import json
+
+from .helpers import datapoint_priority
 
 PROTOCOL_OPTIONS = [
     selector.SelectOptionDict(value="http", label="HTTP"),
@@ -44,11 +65,61 @@ PROTOCOL_OPTIONS = [
 import logging
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
+
+def priority_schema(datapoints):
+    """Two multi-selects that sort datapoints into the fast and medium tiers.
+
+    Anything left unselected stays in the slow tier, so the safe default for a
+    device with limited capacity needs no clicks at all. A datapoint picked in
+    both lists counts as fast.
+    """
+    options = [
+        selector.SelectOptionDict(
+            value=datapoint["Id"],
+            label=f'{datapoint.get("MenuItem", "")} - {datapoint.get("OpLine", "")} '
+                  f'{datapoint.get("Name", datapoint["Id"])}',
+        )
+        for datapoint in datapoints
+    ]
+    current = {
+        priority: [dp["Id"] for dp in datapoints if datapoint_priority(dp) == priority]
+        for priority in (PRIORITY_FAST, PRIORITY_MEDIUM)
+    }
+    return vol.Schema({
+        vol.Optional(CONF_PRIORITY_FAST, default=current[PRIORITY_FAST]):
+            selector.SelectSelector(
+                selector.SelectSelectorConfig(options=options, multiple=True)
+            ),
+        vol.Optional(CONF_PRIORITY_MEDIUM, default=current[PRIORITY_MEDIUM]):
+            selector.SelectSelector(
+                selector.SelectSelectorConfig(options=options, multiple=True)
+            ),
+    })
+
+
+def apply_priorities(datapoints, user_input):
+    """Return datapoints with the priority chosen on the assignment form."""
+    fast = set(user_input.get(CONF_PRIORITY_FAST) or [])
+    medium = set(user_input.get(CONF_PRIORITY_MEDIUM) or [])
+    updated = []
+    for datapoint in datapoints:
+        if datapoint["Id"] in fast:
+            priority = PRIORITY_FAST
+        elif datapoint["Id"] in medium:
+            priority = PRIORITY_MEDIUM
+        else:
+            priority = PRIORITY_SLOW
+        updated.append({**datapoint, CONF_PRIORITY: priority})
+    return updated
+
 class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for siemens_ozw672."""
 
-    VERSION = 1
-    MINOR_VERSION = 5
+    # Taken from const so the flow and async_migrate_entry() can never disagree:
+    # a hard-coded 5 here meant every freshly created entry was immediately
+    # considered out of date and re-migrated on the next start.
+    VERSION = CONF_VERSION
+    MINOR_VERSION = CONF_MINOR_VERSION
     CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL
 
     def __init__(self):
@@ -67,6 +138,10 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self.alldevices = None
         self._options = dict(DEFAULT_OPTIONS)
         self._disablenamechoice = False
+        self._alldevicemenuitems = []
+        # Set when the selected device is already configured, so the final step
+        # updates that entry instead of creating a duplicate one beside it.
+        self._existing_entry = None
 
     async def async_step_user(self, user_input=None):
         """Handle a flow initialized by the user."""
@@ -123,7 +198,8 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             ### Support updating an existing device
             existing_entry = self.async_entry_for_existingdevice(self._data[CONF_DEVICE_ID])
             if existing_entry:
-                self._datapoints = existing_entry.data.get(CONF_DATAPOINTS)
+                self._existing_entry = existing_entry
+                self._datapoints = list(existing_entry.data.get(CONF_DATAPOINTS) or [])
                 # Detect if a change to the naming has occurred and updated all.
                 _LOGGER.debug(f'Found existing datapoints: {self._datapoints}')
             await self.async_set_unique_id(self._devserialnumber)
@@ -174,16 +250,7 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("****** Recursing further through menu ******")
                 return await self.async_step_submenu()
             else: ### FINALLY... Create our discovered entities. ###
-                self._data["options"]=self._options
-                use_device_longname = self._options.get(CONF_USE_DEVICE_LONGNAME)
-                if (use_device_longname == True):
-                    _LOGGER.debug(f'Options: {self._options} -- Will use Device Long Name')
-                    dev_title=self._data[CONF_DEVICE_LONGNAME]
-                else:
-                    dev_title=self._data[CONF_DEVICE]
-                return self.async_create_entry(    
-                    title=dev_title, data=self._data, options=self._options
-                )
+                return await self.async_step_priorities()
         else:
             if len(self._alldevicemenuitems) > 0:
                 item = self._alldevicemenuitems.pop(0)
@@ -192,10 +259,53 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ### Note - these could be submenus
                 return await self._show_submenu_selection_form(item,user_input)
             else:
-                # We are done
-                return
-        return await self._show_submenu_selection_form(item,user_input)
+                # Nothing was selected on the main menu, so there is nothing to
+                # walk through. Returning None here made Home Assistant raise on
+                # a flow step that produced no result.
+                return self.async_abort(reason="no_menu_items")
 
+    async def async_step_priorities(self, user_input=None):
+        """Assign each selected datapoint to a polling tier.
+
+        The OZW672 is a small embedded web server and every datapoint costs it one
+        HTTP request per poll, so polling everything at the same rate is what makes
+        a large selection painful. Anything not raised here stays in the slowest
+        tier, which is the safe default for a device this size.
+        """
+        self._errors = {}
+        if user_input is not None:
+            self._datapoints = apply_priorities(self._datapoints, user_input)
+            self._data[CONF_DATAPOINTS] = self._datapoints
+            return self._async_finish()
+        return self.async_show_form(
+            step_id="priorities",
+            data_schema=priority_schema(self._datapoints),
+            description_placeholders={"count": str(len(self._datapoints))},
+            errors=self._errors,
+        )
+
+    def _async_finish(self):
+        """Create the config entry, or update the one this device already has."""
+        self._data["options"] = self._options
+        if self._options.get(CONF_USE_DEVICE_LONGNAME):
+            _LOGGER.debug(f'Options: {self._options} -- Will use Device Long Name')
+            dev_title = self._data[CONF_DEVICE_LONGNAME]
+        else:
+            dev_title = self._data[CONF_DEVICE]
+        if self._existing_entry is not None:
+            # The device is already configured. Updating that entry keeps its
+            # entities and history; creating a second entry with the same unique
+            # id used to duplicate every entity instead.
+            self.hass.config_entries.async_update_entry(
+                self._existing_entry,
+                title=dev_title,
+                data=self._data,
+                options=self._options,
+            )
+            return self.async_abort(reason="reconfigure_successful")
+        return self.async_create_entry(
+            title=dev_title, data=self._data, options=self._options
+        )
 
     @staticmethod
     @callback
@@ -237,11 +347,14 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         for device in self._discovereddevices:
             devchannel=str(device["Text"]["Long"]).split(' ',1)[0]
             devname=str(device["Text"]["Long"]).split(' ',1)[1]
+            # Fall back to the name from the menu tree, then let a matching entry
+            # in the device list override it. Without the break, the *last* device
+            # in the list decided the name for every entry.
+            device["Name"] = devname
             for dev in self.alldevices:
                 if dev['Addr'] == devchannel:
-                    device["Name"]=dev['Name']
-                else:
-                    device["Name"]=devname
+                    device["Name"] = dev['Name']
+                    break
             device["LongName"]=str(device["Text"]["Long"])
             device_list_selector.append(selector.SelectOptionDict(value=json.dumps(device), label="Address+Device: "+str(device["Text"]["Long"] +" (Name:"+device["Name"]+")")))
         if self._disablenamechoice == False:
@@ -295,7 +408,6 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             menutree_menulocation = menutree_name
         else:
             menutree_menulocation = menutree_item["MenuItem"] + "->" + menutree_name
-        existing_menu_items = self._devicemenuitems
         existing_dp_items = self._datapoints
         
         new_all_items = await self._get_menutree(menutree_id)
@@ -429,52 +541,92 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
         self.options = None
 
     async def async_step_init(self, user_input=None):  # pylint: disable=unused-argument
-        """Manage the options."""
+        """Offer the two things worth changing after setup."""
         if self.options is None:
             self.options = dict(self.config_entry.options)
             _LOGGER.debug(f'OptionsFlow - Existing options: {self.options}')
-            self.conf_httptimeout = self.options.get(CONF_HTTPTIMEOUT)
-            self.conf_httpretries = self.options.get(CONF_HTTPRETRIES)
-            self.conf_scaninterval = self.options.get(CONF_SCANINTERVAL)
-            self.conf_use_device_longname = self.options.get(CONF_USE_DEVICE_LONGNAME)
-            if self.conf_httptimeout is None: self.conf_httptimeout=DEFAULT_HTTPTIMEOUT
-            if self.conf_httpretries is None: self.conf_httpretries=DEFAULT_HTTPRETRIES
-            if self.conf_scaninterval is None: self.conf_scaninterval=DEFAULT_SCANINTERVAL
-            if self.conf_use_device_longname is None: self.conf_use_device_longname=DEFAULT_USE_DEVICE_LONGNAME
-        return await self.async_step_user()
+        return self.async_show_menu(step_id="init", menu_options=["settings", "priorities"])
 
-    async def async_step_user(self, user_input=None):
-        """Handle a flow initialized by the user."""
+    async def async_step_settings(self, user_input=None):
+        """Connection settings, poll intervals and which entity domains are on."""
         if user_input is not None:
             self.options.update(user_input)
             _LOGGER.debug(f'Updating Options.  New Options: {self.options}')
-            return await self._update_options()
-            
+            return self._update_options()
+
+        def default(key, fallback):
+            value = self.options.get(key)
+            return fallback if value is None else value
 
         return self.async_show_form(
-            step_id="user",
+            step_id="settings",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_HTTPTIMEOUT, default=self.conf_httptimeout): int,
-                    vol.Required(CONF_HTTPRETRIES, default=self.conf_httpretries): int,
-                    vol.Required(CONF_SCANINTERVAL, default=self.conf_scaninterval): int,
-                    vol.Required(CONF_USE_DEVICE_LONGNAME, default=self.conf_use_device_longname): bool,
+                    # Bounded, because a bare int let a scan interval of 0 turn the
+                    # coordinator into a tight polling loop and 0 retries stopped the
+                    # client from issuing a single request.
+                    vol.Required(CONF_HTTPTIMEOUT, default=default(CONF_HTTPTIMEOUT, DEFAULT_HTTPTIMEOUT)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_HTTPTIMEOUT, max=MAX_HTTPTIMEOUT)
+                    ),
+                    vol.Required(CONF_HTTPRETRIES, default=default(CONF_HTTPRETRIES, DEFAULT_HTTPRETRIES)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_HTTPRETRIES, max=MAX_HTTPRETRIES)
+                    ),
+                    # The three polling tiers. CONF_SCANINTERVAL keeps its name and
+                    # its meaning as the fastest tier's interval.
+                    vol.Required(CONF_SCANINTERVAL, default=default(CONF_SCANINTERVAL, DEFAULT_SCANINTERVAL)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCANINTERVAL, max=MAX_SCANINTERVAL)
+                    ),
+                    vol.Required(CONF_INTERVAL_MEDIUM, default=default(CONF_INTERVAL_MEDIUM, DEFAULT_INTERVAL_MEDIUM)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCANINTERVAL, max=MAX_SCANINTERVAL)
+                    ),
+                    vol.Required(CONF_INTERVAL_SLOW, default=default(CONF_INTERVAL_SLOW, DEFAULT_INTERVAL_SLOW)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCANINTERVAL, max=MAX_SCANINTERVAL)
+                    ),
+                    # A deliberate pause between consecutive requests, for a device
+                    # that struggles under a long poll.
+                    vol.Required(CONF_REQUEST_DELAY, default=default(CONF_REQUEST_DELAY, DEFAULT_REQUEST_DELAY)): vol.All(
+                        vol.Coerce(float), vol.Range(min=0, max=MAX_REQUEST_DELAY)
+                    ),
+                    vol.Required(CONF_USE_DEVICE_LONGNAME, default=default(CONF_USE_DEVICE_LONGNAME, DEFAULT_USE_DEVICE_LONGNAME)): bool,
+                    vol.Required(CONF_VERIFY_SSL, default=default(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)): bool,
                     vol.Required("switch", default=self.options.get("switch", True)): bool,
                     vol.Required("select", default=self.options.get("select", True)): bool,
                     vol.Required("number", default=self.options.get("number", True)): bool,
                     vol.Required("binary_sensor", default=self.options.get("binary_sensor", True)): bool,
-                    vol.Required("sensor", default=self.options.get("sensor", True)): bool
+                    vol.Required("sensor", default=self.options.get("sensor", True)): bool,
                 }
             )
         )
 
-    async def _update_options(self):
-        """Update config entry options."""
-        _LOGGER.debug(
-            "Recreating entry %s due to configuration change",
-            self.config_entry.title
+    async def async_step_priorities(self, user_input=None):
+        """Re-assign datapoints to polling tiers without redoing discovery."""
+        datapoints = self.config_entry.data.get(CONF_DATAPOINTS) or []
+        if user_input is not None:
+            data = dict(self.config_entry.data)
+            data[CONF_DATAPOINTS] = apply_priorities(datapoints, user_input)
+            # Priorities live in the datapoints, which are entry *data*. Writing
+            # them here rather than into the options is what lets the reload pick
+            # up the new tiers.
+            self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+            return self._update_options()
+        return self.async_show_form(
+            step_id="priorities",
+            data_schema=priority_schema(datapoints),
+            description_placeholders={"count": str(len(datapoints))},
         )
+
+    def _update_options(self):
+        """Update config entry options.
+
+        The entry title follows the device-name choice here rather than in the
+        update listener: renaming from inside async_setup_entry would fire the
+        listener again and reload the entry a second time.
+        """
+        _LOGGER.debug("Updating options for entry %s", self.config_entry.title)
+        if self.options.get(CONF_USE_DEVICE_LONGNAME):
+            new_title = self.config_entry.data.get(CONF_DEVICE_LONGNAME)
+        else:
+            new_title = self.config_entry.data.get(CONF_DEVICE)
+        if new_title and new_title != self.config_entry.title:
+            self.hass.config_entries.async_update_entry(self.config_entry, title=new_title)
         return self.async_create_entry(title="", data=self.options)
-
-
-

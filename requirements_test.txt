@@ -1,5 +1,8 @@
 # Pinned exactly: pytest-homeassistant-custom-component vendors a specific Home Assistant
 # core version (and pulls in pytest/pytest-asyncio). Leaving it unpinned means the HA
 # version under test drifts silently between runs.
-# 0.13.346 -> Home Assistant 2026.7.2, requires Python 3.13+
-pytest-homeassistant-custom-component==0.13.346
+#
+# 0.13.357 -> Home Assistant 2026.8.3, requires Python 3.14.
+# Each release of this package requires a specific minimum Python, so raise this pin and
+# the python-version in .github/workflows/validate.yml together.
+pytest-homeassistant-custom-component==0.13.357

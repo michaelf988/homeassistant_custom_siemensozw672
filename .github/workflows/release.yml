@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Attach the integration to the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the version in the manifest
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(python scripts/set_version.py --check)"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest version $manifest."
+            echo "Bump first: python scripts/set_version.py $tag, commit, then tag that commit."
+            exit 1
+          fi
+          echo "Releasing $manifest"
+
+      # The archive holds the integration's files at its root, which is what HACS
+      # extracts into custom_components/siemens_ozw672/.
+      - name: Build the release archive
+        run: |
+          cd custom_components/siemens_ozw672
+          zip -r "$GITHUB_WORKSPACE/siemens_ozw672.zip" . -x '*__pycache__*'
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" siemens_ozw672.zip --clobber

@@ -40,6 +40,52 @@ Sensors Supported
 ![example][exampleimg]
 
 
+## Polling priorities
+
+The OZW672 reads exactly one datapoint per HTTP request, and it is a small embedded web
+server. Polling 60 datapoints every minute means 60 requests a minute, which is what
+makes a large selection slow and, on a busy plant, unreliable.
+
+Every datapoint is therefore assigned to one of three polling tiers:
+
+| Tier | Default interval | Typical use |
+| --- | --- | --- |
+| Priority 1 - fast | 60 s | Flow temperature, burner state - anything an automation reacts to |
+| Priority 2 - medium | 300 s | Setpoints, operating modes |
+| Priority 3 - slow | 900 s | Meter readings, diagnostics, anything you only look at |
+
+The last step of the setup wizard asks which datapoints belong in the fast and medium
+tiers. **Anything you do not pick stays in the slow tier**, so the gentlest configuration
+for the device is also the one that needs no clicks.
+
+Each tier is polled by its own coordinator with its own interval, and a tier with no
+datapoints is never polled at all. All three share one connection and one lock, so the
+device never sees two requests at once. If it still struggles, raise
+*Pause between requests* in the options.
+
+To change the assignment later, open the integration's options and choose
+*Which datapoints are polled how often*. Config entries created before this existed are
+migrated into the medium tier.
+
+
+## Releasing
+
+The version lives in `manifest.json` and `const.py`, and the release workflow refuses a
+tag that disagrees with the manifest. To cut a release:
+
+1. `python scripts/set_version.py 0.6.0`
+2. Add the matching `## 0.6.0` section to `CHANGELOG.md`.
+3. Commit and push. CI runs hassfest, the HACS validation and the test suite.
+4. Publish a GitHub release tagged `v0.6.0` (or `0.6.0`).
+
+The workflow then builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`
+and attaches it to the release. `hacs.json` sets `zip_release`, so HACS installs that
+archive rather than cloning the repository.
+
+A test guards the whole chain: `manifest.json`, `const.VERSION`, the changelog heading
+and the config flow's schema version all have to agree before anything is tagged.
+
+
 ## Disclaimer
 
 **This is an independent, unofficial, community-developed project. It is not affiliated

@@ -1,110 +1,71 @@
 """Switch platform for Siemens OZW672."""
-from homeassistant.components.switch import SwitchEntity
+import logging
 
-from .const import DEFAULT_NAME
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.exceptions import HomeAssistantError
+
+from .api import SiemensOzw672ApiError
 from .const import DOMAIN
 from .const import ICON_SWITCH
 from .const import SWITCH
-from .const import CONF_PREFIX_FUNCTION
-from .const import CONF_PREFIX_OPLINE
 from .entity import SiemensOzw672Entity
-
-from homeassistant.helpers.entity import Entity
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
-
-import logging
+from .helpers import dp_configs_for_hatype, platform_enabled
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup switch platform."""
-    _LOGGER.debug(f"SWITCH - Setup_Entry.  DATA: {hass.data[DOMAIN]}")  
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    if not platform_enabled(entry, SWITCH):
+        _LOGGER.debug("SWITCH - domain disabled in options, adding no entities")
+        return
+    runtime = hass.data[DOMAIN][entry.entry_id]
 
-    datapoints = coordinator.data
-    # Add sensors
-    entities=[]
-    for item in datapoints:
-        _LOGGER.debug(f"SWITCH Data Point Item: {datapoints[item]}")
-        # Reset per datapoint so a non-matching item cannot reuse the previous config.
-        dp_config=None
-        for dp_data in entry.data["datapoints"]:
-            if dp_data["Id"] == item :
-                dp_config=dp_data
-                if int(dp_data["OpLine"]) > 1:
-                    identifier = dp_data["OpLine"] 
-                else:
-                    identifier="00"+item
-                ### Will use the OpLine as the identifier if it exists. If not - we will use the API ID.  
-                #   Note: the API datapoint ID can change if the tree is re-created.  
-                #   I am hoping that by using the OpLine as the identifier - we will avoid duplicate sensors
-                dp_config.update({'entry_id': entry.entry_id + "_" + identifier}) 
-                dp_config.update({'device_id': entry.entry_id})
-                dp_config.update({'device_name': entry.data["devicename"]})
-                prefix=""
-                if entry.data[CONF_PREFIX_FUNCTION] == True: 
-                    prefix=f'{dp_data["MenuItem"]} - '
-                if entry.data[CONF_PREFIX_OPLINE] == True: 
-                    prefix=prefix + f'{dp_data["OpLine"]} '
-                dp_config.update({'entity_prefix': prefix})
-                break
-        # At this point - the config for the datapoint is in dp_config
-        #               - the data is in dp_data
-        if dp_config is not None:
-            if dp_config["DPDescr"]["HAType"] == "switch":
-                _LOGGER.debug(f"SWITCH Adding Entity with config: {dp_config} and data: {dp_data}")
-                entities.append(dp_config)
-                async_add_entities([SiemensOzw672BinarySwitch(coordinator,dp_config)])
-            else:
-                # DO nothing - unknown datapoint types will be added in the sensor domain.
-                continue
+    entities = [
+        SiemensOzw672BinarySwitch(runtime.coordinator_for(dp_config["priority"]), dp_config)
+        for dp_config in dp_configs_for_hatype(entry, "switch")
+    ]
+    _LOGGER.debug(f"SWITCH Adding {len(entities)} entities")
+    async_add_entities(entities)
 
 
 class SiemensOzw672BinarySwitch(SiemensOzw672Entity, SwitchEntity):
     """siemens_ozw672 switch class."""
 
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        _LOGGER.debug(f"SiemensOzw672BinarySwitch: Config: {self.config_entry}")
-        return f'{self.config_entry["entity_prefix"]}{self.config_entry["Name"]}'
-
-    @property
-    def icon(self):
-        """Return the icon of this switch."""
-        return ICON_SWITCH
+    _attr_icon = ICON_SWITCH
 
     @property
     def is_on(self):
-        """Return true if the switch is on."""
-        item=self.config_entry["Id"]
-        return self.coordinator.data[item]["Data"]["Value"] in ['On']
+        """Return true if the switch is on, or None when there is no reading."""
+        value = self._raw_value
+        if value is None:
+            return None
+        return value == "On"
 
     async def async_turn_on(self, **kwargs):  # pylint: disable=unused-argument
         """Turn on the switch."""
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        _LOGGER.info(f'SiemensOzw672BinarySwitch - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: 1')
-        output = await self.coordinator.api.async_write_data(self.config_entry,'1')
-        await self.coordinator._async_update_data_forid(item)
-        await self.coordinator.async_request_refresh()
-        return
+        await self._async_write("1")
 
     async def async_turn_off(self, **kwargs):  # pylint: disable=unused-argument
         """Turn off the switch."""
-        item=self.config_entry["Id"]
-        opline=self.config_entry["OpLine"]
-        name=self.config_entry["Name"]
-        _LOGGER.info(f'SiemensOzw672BinarySwitch - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: 0')
-        output = await self.coordinator.api.async_write_data(self.config_entry,'0')
-        await self.coordinator._async_update_data_forid(item)
+        await self._async_write("0")
+
+    async def _async_write(self, value: str) -> None:
+        """Write a value and refresh, surfacing failures to the caller.
+
+        The write result used to be assigned and dropped, so a rejected write
+        looked exactly like a successful one in the UI.
+        """
+        item = self.config_entry["Id"]
+        opline = self.config_entry["OpLine"]
+        name = self.config_entry["Name"]
+        _LOGGER.info(
+            f'SiemensOzw672BinarySwitch - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {value}'
+        )
+        try:
+            await self.coordinator.api.async_write_data(self.config_entry, value)
+        except SiemensOzw672ApiError as exception:
+            raise HomeAssistantError(
+                f"Could not write {name} on the OZW672: {exception}"
+            ) from exception
         await self.coordinator.async_request_refresh()
-        return
