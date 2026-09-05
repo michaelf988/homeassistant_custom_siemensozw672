@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- **The docs now describe this fork.** `manifest.json` pointed Home Assistant's
+  "visit documentation" link and every reported issue at the upstream repository, as did
+  `ISSUE_URL` in the startup banner and the links throughout the README. All now reach
+  this fork, with the original by [@johnaherninfotrack](https://github.com/johnaherninfotrack)
+  credited where it belongs.
+- **Removed the badge rows** from `README.md` and `info.md`. They advertised release
+  0.3.9 long after 0.5.0, claimed pre-commit and Black were in use when neither is
+  configured in this repository, and every link pointed upstream.
+- Fixed content that was wrong or left over from the project template: a note about
+  waking "your vehicle(s)" during installation, the installation steps listed twice,
+  `Read/Writ eSwitch`, `teh OZW672`, and a broken link (`https://github.com/:q/...`) in
+  `info.md`.
+- `CONTRIBUTING.md` described a devcontainer and a pre-commit configuration that do not
+  exist in this repository, and told contributors to branch from `master`. It now
+  documents how the tests actually run, what CI checks, and the rule for config entry
+  schema changes.
+- Documented the options dialog, and corrected the claim that HTTPS certificates are
+  never verified — that is now an option.
+
 ## 0.5.0
 
 ### Added

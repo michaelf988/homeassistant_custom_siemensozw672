@@ -65,6 +65,49 @@ def test_hacs_json_has_no_unknown_keys():
     assert not unknown, f"hacs.json carries keys HACS rejects: {sorted(unknown)}"
 
 
+REPO = "michaelf988/homeassistant_custom_siemensozw672"
+
+
+def test_manifest_points_at_this_fork():
+    """Documentation and the issue tracker must reach the maintainers of this fork.
+
+    Both still pointed at the upstream repository, so Home Assistant's "visit
+    documentation" link and every reported issue went to the original author.
+    """
+    manifest = json.loads((COMPONENT / "manifest.json").read_text())
+    assert manifest["documentation"] == f"https://github.com/{REPO}"
+    assert manifest["issue_tracker"] == f"https://github.com/{REPO}/issues"
+    assert manifest["codeowners"] == ["@michaelf988"]
+
+
+def test_the_startup_banner_points_at_this_fork():
+    """ISSUE_URL is what the log tells users to open an issue on."""
+    from custom_components.siemens_ozw672.const import ISSUE_URL
+
+    assert ISSUE_URL == f"https://github.com/{REPO}/issues"
+
+
+@pytest.mark.parametrize("doc", ["README.md", "info.md"], ids=lambda p: p)
+def test_docs_carry_no_badges(doc):
+    """The badge row was stale and mostly decorative.
+
+    It advertised release 0.3.9 long after 0.5.0, claimed pre-commit and Black were
+    in use when neither is configured here, and every link pointed upstream.
+    """
+    text = (ROOT / doc).read_text()
+    assert "img.shields.io" not in text
+    assert "-shield]" not in text
+
+
+@pytest.mark.parametrize("doc", ["README.md", "info.md", "CONTRIBUTING.md"], ids=lambda p: p)
+def test_docs_have_no_unresolved_reference_links(doc):
+    """A link definition removed with the badges must not leave a dangling reference."""
+    text = (ROOT / doc).read_text()
+    defined = set(re.findall(r"^\[([^\]]+)\]:", text, re.M))
+    used = set(re.findall(r"\]\[([^\]]+)\]", text))
+    assert used <= defined, f"{doc} references undefined links: {sorted(used - defined)}"
+
+
 def test_the_release_archive_name_matches_the_workflow():
     """hacs.json names the asset the release workflow has to produce."""
     filename = json.loads(HACS_JSON.read_text())["filename"]
