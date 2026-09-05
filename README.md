@@ -79,7 +79,9 @@ tag that disagrees with the manifest. To cut a release:
 4. Publish a GitHub release tagged `v0.6.0` (or `0.6.0`).
 
 The workflow then builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`
-and attaches it to the release. `hacs.json` sets `zip_release`, so HACS installs that
+and attaches it to the release. To exercise the pipeline without publishing anything,
+run the Release workflow manually from the Actions tab: everything runs except the
+upload, and the archive is kept as a build artifact you can download and inspect. `hacs.json` sets `zip_release`, so HACS installs that
 archive rather than cloning the repository.
 
 A test guards the whole chain: `manifest.json`, `const.VERSION`, the changelog heading

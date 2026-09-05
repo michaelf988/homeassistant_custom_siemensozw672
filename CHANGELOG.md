@@ -52,6 +52,11 @@
   checks that `manifest.json`, `const.VERSION`, the changelog heading and the config
   flow's schema version all agree. It immediately caught `manifest.json` still sitting
   at 0.4.0 while `const.py` had moved to 0.5.0.
+- The release workflow can be dry-run from the Actions tab. It had never executed at
+  all, which is a poor thing to discover during an actual release. A manual run does
+  everything except the upload and keeps the archive as an artifact, and a new step
+  asserts the archive is shaped the way HACS unpacks it - `manifest.json` at the root,
+  the platform files present, no `__pycache__`.
 - The first CI run failed all three jobs, which is what CI is for. Fixed: `hacs.json`
   still carried `domains` and `iot_class`, which HACS now rejects outright; the setup
   step's description contained a URL, which hassfest forbids in translation strings;
