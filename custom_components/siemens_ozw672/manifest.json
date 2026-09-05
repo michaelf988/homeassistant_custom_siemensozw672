@@ -2,14 +2,14 @@
   "domain": "siemens_ozw672",
   "name": "Siemens OZW672",
   "codeowners": [
-    "@johnaherninfotrack"
+    "@michaelf988"
   ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672",
+  "documentation": "https://github.com/michaelf988/homeassistant_custom_siemensozw672",
   "integration_type": "hub",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/issues",
+  "issue_tracker": "https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues",
   "requirements": [],
   "version": "0.5.0"
 }

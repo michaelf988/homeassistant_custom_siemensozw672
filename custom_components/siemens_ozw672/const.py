@@ -7,12 +7,12 @@ VERSION = "0.5.0"
 CONF_VERSION = 1
 CONF_MINOR_VERSION = 6
 
-ATTRIBUTION = "Integration created by John"
+ATTRIBUTION = "Siemens OZW672 integration, originally created by John Ahern"
 # Shown as the device manufacturer in Home Assistant. Nominative use only - see
 # the trademark note in the README; device_info used to report the integration
 # name as the manufacturer and the integration version as the model.
 MANUFACTURER = "Siemens"
-ISSUE_URL = "https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/issues"
+ISSUE_URL = "https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues"
 
 # Icons
 ICON = "mdi:bookmark"

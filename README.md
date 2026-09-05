@@ -1,58 +1,71 @@
-# Siemens OZW672 Integration for HomeAssistant
+# Siemens OZW672 Integration for Home Assistant
 
-[![GitHub Release][releases-shield]][releases]
-[![GitHub Activity][commits-shield]][commits]
-[![License][license-shield]](LICENSE)
+A Home Assistant integration for the Siemens OZW672 web server, which exposes LPB/BSB
+heating plants (RVS controllers and their extension modules) over a local HTTP API.
 
-[![pre-commit][pre-commit-shield]][pre-commit]
-[![Black][black-shield]][black]
-
-[![hacs][hacsbadge]][hacs]
-[![Project Maintenance][maintenance-shield]][user_profile]
-
-[![Discord][discord-shield]][discord]
-[![Community Forum][forum-shield]][forum]
-
+> **This is a fork.** The original integration is
+> [johnaherninfotrack/homeassistant_custom_siemensozw672](https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672)
+> by [@johnaherninfotrack](https://github.com/johnaherninfotrack). This fork is maintained
+> independently by [@michaelf988](https://github.com/michaelf988) and is not endorsed by
+> the original author. Report issues with *this* fork
+> [here](https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues), not
+> upstream. See [CHANGELOG.md](CHANGELOG.md) for what differs.
 
 ## Overview
 
-OZW672 is a Web server platform which enables remote plant monitoring for Siemens LPB/BSB Plants.
-This integration was built and tested using a OZW672.01 running v11.0 firmware monitoring an RVS43.345/109 with 
-three AVS73.390/109 extension modules.  
+The OZW672 is a web server platform for remote monitoring of Siemens LPB/BSB plants. The
+original integration was built and tested against an OZW672.01 running firmware v11.0,
+monitoring an RVS43.345/109 with three AVS73.390/109 extension modules.
 
-Yes - you can use this integration to WRITE values to the OZW672.  Noting that:
-1. The OZW672 only supports certain datapoints to have WriteAccess
-2. This integration only supports writing for "Enumerations", "Numbers" and "Switch" domains.
-3. Some values you write are ignored by the OZW672.  If that happens - test using the OZW672 UI.
+You can also **write** values back to the OZW672, with three caveats:
 
+1. The OZW672 marks only certain datapoints as writeable.
+2. Writing is supported for enumerations, numbers and switches.
+3. Some writes are silently ignored by the device. If that happens, check the same
+   datapoint in the OZW672's own web UI.
 
-Sensors Supported
+### Entity types
 
-| Platform        | Description                                                               |
-| --------------- | ------------------------------------------------------------------------- |
-| `binary_sensor` | Read only Show something `On` or `Off`.  eg a Pump                        |
-| `sensor`        | Read only sensors that don't fit in any other category                    |
-| `switch`        | Read/Writ eSwitch something `On` or `Off`.                                |
-| `select`        | Read/Write selectable Enumerations                                        |
-| `number`        | Read/Write Numbers - eg Temperature or Percentage                         |
+| Platform | Description |
+| --- | --- |
+| `binary_sensor` | Read-only `On` / `Off` state, e.g. a pump |
+| `sensor` | Read-only values that fit no other category |
+| `switch` | Read/write `On` / `Off` |
+| `select` | Read/write enumerations |
+| `number` | Read/write numbers, e.g. a temperature or percentage |
 
+![example](example.png)
 
-![example][exampleimg]
+## Installation
 
+**Via HACS** (recommended):
+
+1. In HACS → *Integrations*, open the three-dot menu → *Custom repositories*.
+2. Add `https://github.com/michaelf988/homeassistant_custom_siemensozw672` with category
+   *Integration*.
+3. *Explore & Download Repositories*, search for **Siemens OZW672**, download.
+4. Restart Home Assistant.
+
+**Manually**: copy `custom_components/siemens_ozw672/` into your Home Assistant
+`custom_components/` directory and restart.
+
+Then add the integration under *Settings → Devices & Services → + Add Integration* and
+search for **Siemens OZW672**. Configuration is done entirely in the UI; there is no YAML
+configuration.
 
 ## Polling priorities
 
 The OZW672 reads exactly one datapoint per HTTP request, and it is a small embedded web
-server. Polling 60 datapoints every minute means 60 requests a minute, which is what
-makes a large selection slow and, on a busy plant, unreliable.
+server. Polling 60 datapoints every minute means 60 requests a minute, which is what makes
+a large selection slow and, on a busy plant, unreliable.
 
 Every datapoint is therefore assigned to one of three polling tiers:
 
 | Tier | Default interval | Typical use |
 | --- | --- | --- |
-| Priority 1 - fast | 60 s | Flow temperature, burner state - anything an automation reacts to |
-| Priority 2 - medium | 300 s | Setpoints, operating modes |
-| Priority 3 - slow | 900 s | Meter readings, diagnostics, anything you only look at |
+| Priority 1 — fast | 60 s | Flow temperature, burner state — anything an automation reacts to |
+| Priority 2 — medium | 300 s | Setpoints, operating modes |
+| Priority 3 — slow | 900 s | Meter readings, diagnostics, anything you only look at |
 
 The last step of the setup wizard asks which datapoints belong in the fast and medium
 tiers. **Anything you do not pick stays in the slow tier**, so the gentlest configuration
@@ -60,39 +73,111 @@ for the device is also the one that needs no clicks.
 
 Each tier is polled by its own coordinator with its own interval, and a tier with no
 datapoints is never polled at all. All three share one connection and one lock, so the
-device never sees two requests at once. If it still struggles, raise
-*Pause between requests* in the options.
+device never sees two requests at once. If it still struggles, raise *Pause between
+requests* in the options.
 
-To change the assignment later, open the integration's options and choose
-*Which datapoints are polled how often*. Config entries created before this existed are
-migrated into the medium tier.
+To change the assignment later, open the integration's options and choose *Which
+datapoints are polled how often*. Config entries created before this existed are migrated
+into the medium tier.
 
+## Options
+
+Open the integration's options and choose *Connection, polling intervals and entity
+domains*:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| HTTP timeout | 30 s | |
+| HTTP retries | 2 | |
+| Polling interval, priority 1/2/3 | 60 / 300 / 900 s | See above |
+| Pause between requests | 0 s | Deliberate gap between consecutive requests |
+| Verify the HTTPS certificate | off | The device ships a self-signed certificate; turn this on only if you installed a trusted one |
+| Use the device Addr+Type as the name | off | |
+| Switch / select / number / binary sensor / sensor | on | Turn an entity domain off entirely |
+
+## Recommendations for reliable operation
+
+1. **Use HTTP rather than HTTPS.** It is measurably more scalable on this hardware. Enable
+   it first on the device: *Home → 0.x OZW672.01 → Settings → Communication → Services →
+   We access via http = ON*.
+2. **Give the OZW672 a static IP, gateway and DNS**: *Home → 0.x OZW672.01 → Settings →
+   Communication → Ethernet*.
+3. **Discover a few datapoints at a time.** Pick one function and at most ten datapoints
+   per run, then re-run discovery to add more.
+4. **Use a dedicated user** on the OZW672 for Home Assistant polling — the *Service* user
+   group works well.
+
+### Entity naming
+
+Entities can be prefixed two ways, chosen during setup:
+
+- no prefix — `Legionella function`
+- function/menu item — `DHW - Legionella function`
+- operating line number from the manual — `1640 Legionella function`
+- both — `DHW - 1640 Legionella function`
+
+Note that from Home Assistant 2026.8, entity IDs of entities attached to a device also
+carry the device name (`sensor.rvs43_outside_temp`). That is Home Assistant's own naming,
+independent of these prefixes.
+
+## Development
+
+```console
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements_test.txt
+python -m pytest
+```
+
+The test suite pins the Home Assistant version it runs against — currently 2026.8.3 on
+Python 3.14. Every push and pull request runs `hassfest`, the HACS validation and the full
+suite; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Releasing
 
-The version lives in `manifest.json` and `const.py`, and the release workflow refuses a
-tag that disagrees with the manifest. To cut a release:
+The version lives in `manifest.json` and `const.py`, and the release workflow refuses a tag
+that disagrees with the manifest. To cut a release:
 
 1. `python scripts/set_version.py 0.6.0`
 2. Add the matching `## 0.6.0` section to `CHANGELOG.md`.
 3. Commit and push. CI runs hassfest, the HACS validation and the test suite.
 4. Run the **Release** workflow from the Actions tab with **publish** ticked.
 
-That builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`, tags the
-commit `v0.6.0`, and publishes a release whose notes are the `## 0.6.0` section of the
-changelog — so the release and the changelog cannot drift apart. It refuses to run if a
-release for that tag already exists.
+That builds `siemens_ozw672.zip` from `custom_components/siemens_ozw672/`, tags the commit
+`v0.6.0`, and publishes a release whose notes are the `## 0.6.0` section of the changelog —
+so the release and the changelog cannot drift apart. It refuses to run if a release for
+that tag already exists.
 
 Running the same workflow with **publish** unticked is a dry run: everything except the
 publish, with the archive kept as a downloadable build artifact.
 
 Publishing from the Releases page by hand still works and takes the same path — the
-workflow checks the tag against `manifest.json` and attaches the archive. `hacs.json` sets `zip_release`, so HACS installs that
-archive rather than cloning the repository.
+workflow checks the tag against `manifest.json` and attaches the archive. `hacs.json` sets
+`zip_release`, so HACS installs that archive rather than cloning the repository.
 
-A test guards the whole chain: `manifest.json`, `const.VERSION`, the changelog heading
-and the config flow's schema version all have to agree before anything is tagged.
+A test guards the whole chain: `manifest.json`, `const.VERSION`, the changelog heading and
+the config flow's schema version all have to agree before anything is tagged.
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). When reporting a bug,
+please enable debug logging and attach the logs:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.siemens_ozw672: debug
+```
+
+## Credits
+
+Original integration by [@johnaherninfotrack](https://github.com/johnaherninfotrack),
+written on an OZW672.01 monitoring a home hydronic plant. This fork builds on that work.
+
+The project was generated from [@oncleben31](https://github.com/oncleben31)'s
+[Home Assistant Custom Component Cookiecutter](https://github.com/oncleben31/cookiecutter-homeassistant-custom-component),
+with the code template largely from [@Ludeeus](https://github.com/ludeeus)'s
+[integration_blueprint](https://github.com/custom-components/integration_blueprint).
 
 ## Disclaimer
 
@@ -118,78 +203,6 @@ The software is provided under the MIT License **without warranty of any kind** 
 risk.
 
 If you are a rights holder and believe anything here misrepresents your brand, please open
-an issue on the [issue tracker](https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/issues)
+an issue on the
+[issue tracker](https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues)
 and it will be addressed promptly.
-
-## Installation
-
-1. Use [HACS](https://hacs.xyz/docs/setup/download), in `HACS > Integrations Cick the three dots on the top right and select "Custom Repositories" and add a link to this GitHub Repository.
-2. Click "Explore & Download Repositories", Search for "Siemens OZW672" and click "Download.  **Skip to step 8**
-3. If no HACS, use the tool of choice to open the directory (folder) for your HA configuration (where you find `configuration.yaml`).
-4. If you do not have a `custom_components` directory (folder) there, you need to create it.
-5. In the `custom_components` directory (folder) create a new folder called `siemens_ozw672`.
-6. Download _all_ the files from the `custom_components/siemens_ozw672/` directory (folder) in this repository.
-7. Place the files you downloaded in the new directory (folder) you created.
-8. Restart Home Assistant.
-9. [![Add Integration][add-integration-badge]][add-integration] or in the HA UI go to "Settings" -> "Devices & Services" then click "+" and search for "Siemens OZW672 Integration".
-
-Note: This integration will wake up your vehicle(s) during installation.
-1. Add the custom repository in HACS
-2. Install via HACS and restart HomeAssistant
-3. Go to Settings -> Devices and "Add Integration". Select "Siemens OZW672"
-
-## Configuration only supported by the UI
-
-1. The OZW672 is not very powerful - LIMIT polling only variables you require.  You can discover entities to poll, then re-run and discover more.  Only discover max 10 at a time.
-2. In my testing http was more scaleable than https - YOU MUST ENABLE THIS IN THE OZW672
-3. https implementation does NOT check for valid server certificate
-4. The component provides flexbility in naming your entities in two ways:
-    <br>a. No Prefix.  eg. "Legionella function"
-    <br>b. Prefix the datapoint with the Function/MenuItem name eg.  "DHW - Legionella function"
-    <br>c. Prefix the datapoint with the Operating Line number from the manual eg. "1640 Legionella function"
-    <br>d. Both Prefixes - eg: "DHW - 1640 Legionella function"
-
-My recommendations for reliable operation:
-1. Configure the OZW672 to use http. Home > 0.x OZW672.01 > Settings > Communication > Services > We access via http = ON
-2. Configure the OZW672 to use static IP, Gateway & DNS. Home > 0.x OZW672.01 > Settings > Communication > Ethernet
-3. Discover Functions one at a time.  The OZW672 is not powerful - discover one function and max 10 variables at a time.
-4. Configure a dedicated user in teh OZW672 for your home assistant polling.  I used the "Service" user group.  
-
-<!---->
-
-## Contributions are welcome!
-
-If you want to contribute to this please read the [Contribution guidelines](CONTRIBUTING.md)
-Please make sure you enable debug and submit logs.
-
-## Credits
-
-This project was created in my spare time on an OZW671.01 monitoring my home Hydronic Plant.  
-
-This project was generated from [@oncleben31](https://github.com/oncleben31)'s [Home Assistant Custom Component Cookiecutter](https://github.com/oncleben31/cookiecutter-homeassistant-custom-component) template.
-
-Code template was mainly taken from [@Ludeeus](https://github.com/ludeeus)'s [integration_blueprint][integration_blueprint] template
-
----
-
-[integration_blueprint]: https://github.com/custom-components/integration_blueprint
-[black]: https://github.com/psf/black
-[black-shield]: https://img.shields.io/badge/code%20style-black-000000.svg?style=for-the-badge
-[commits-shield]: https://img.shields.io/github/commit-activity/y/johnaherninfotrack/homeassistant_custom_siemensozw672.svg?style=for-the-badge
-[commits]: https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/commits/main
-[hacs]: https://hacs.xyz
-[hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
-[discord]: https://discord.gg/Qa5fW2R
-[discord-shield]: https://img.shields.io/discord/330944238910963714.svg?style=for-the-badge
-[exampleimg]: example.png
-[forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
-[forum]: https://community.home-assistant.io/
-[license-shield]: https://img.shields.io/github/license/johnaherninfotrack/homeassistant_custom_siemensozw672.svg?style=for-the-badge
-[maintenance-shield]: https://img.shields.io/badge/maintainer-%40johnaherninfotrack-blue.svg?style=for-the-badge
-[pre-commit]: https://github.com/pre-commit/pre-commit
-[pre-commit-shield]: https://img.shields.io/badge/pre--commit-enabled-brightgreen?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/johnaherninfotrack/homeassistant_custom_siemensozw672.svg?style=for-the-badge
-[releases]: https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/releases
-[user_profile]: https://github.com/johnaherninfotrack
-[add-integration]: https://my.home-assistant.io/redirect/config_flow_start?domain=siemens_ozw672
-[add-integration-badge]: https://my.home-assistant.io/badges/config_flow_start.svg

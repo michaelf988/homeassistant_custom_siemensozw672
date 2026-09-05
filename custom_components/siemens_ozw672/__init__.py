@@ -1,7 +1,8 @@
 """
 Custom integration to integrate Siemens OZW672 with Home Assistant.
-For more details about this integration, please refer to
-https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672
+
+A fork of johnaherninfotrack/homeassistant_custom_siemensozw672. For more details,
+please refer to https://github.com/michaelf988/homeassistant_custom_siemensozw672
 """
 import logging
 from dataclasses import dataclass, field

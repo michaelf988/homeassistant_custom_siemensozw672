@@ -1,25 +1,72 @@
-[![GitHub Release][releases-shield]][releases]
-[![GitHub Activity][commits-shield]][commits]
-[![License][license-shield]][license]
+A Home Assistant integration for the Siemens OZW672 web server, which exposes LPB/BSB
+heating plants (RVS controllers and their extension modules) over a local HTTP API.
 
-[![hacs][hacsbadge]][hacs]
-[![Project Maintenance][maintenance-shield]][user_profile]
+This is a fork of
+[johnaherninfotrack/homeassistant_custom_siemensozw672](https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672),
+maintained by [@michaelf988](https://github.com/michaelf988). Report issues with this fork
+[here](https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues).
 
-[![Discord][discord-shield]][discord]
-[![Community Forum][forum-shield]][forum]
+**This component sets up the following platforms:**
 
-**This component will set up the following platforms.**
+| Platform | Description |
+| --- | --- |
+| `binary_sensor` | Read-only `On` / `Off` state, e.g. a pump |
+| `sensor` | Read-only values that fit no other category |
+| `switch` | Read/write `On` / `Off` |
+| `select` | Read/write enumerations |
+| `number` | Read/write numbers, e.g. a temperature |
 
-| Platform        | Description                         |
-| --------------- | ----------------------------------- |
-| `binary_sensor` | Show something `True` or `False`.   |
-| `sensor`        | Show info from API.                 |
-| `switch`        | Switch something `True` or `False`. |
-| `select`        | Select one or more enumerations.    |
-| `number`        | A number - eg. a temperature        |
+![example](example.png)
 
+{% if not installed %}
 
-![example][exampleimg]
+## Installation
+
+1. Click install.
+2. Restart Home Assistant.
+3. Go to *Settings → Devices & Services*, click **+ Add Integration** and search for
+   **Siemens OZW672**.
+
+{% endif %}
+
+## Configuration is done in the UI
+
+The OZW672 reads exactly one datapoint per HTTP request and is a small embedded web server,
+so **poll only what you need**. Discovery can be re-run later to add more datapoints — pick
+one function and at most ten datapoints at a time.
+
+Every datapoint is assigned to one of three polling tiers, each with its own interval:
+
+| Tier | Default | Typical use |
+| --- | --- | --- |
+| Priority 1 — fast | 60 s | Anything an automation reacts to |
+| Priority 2 — medium | 300 s | Setpoints, operating modes |
+| Priority 3 — slow | 900 s | Meter readings, diagnostics |
+
+The last setup step sorts the selected datapoints into the fast and medium tiers; anything
+left unpicked stays slow. The assignment can be changed later from the integration's
+options, without redoing discovery.
+
+Entities can be prefixed with the function name, the operating line number from the manual,
+both, or neither — for example `DHW - 1640 Legionella function`.
+
+### Recommendations for reliable operation
+
+1. Use HTTP rather than HTTPS; it is measurably more scalable on this hardware. Enable it
+   first on the device: *Home → 0.x OZW672.01 → Settings → Communication → Services → We
+   access via http = ON*.
+2. Give the OZW672 a static IP, gateway and DNS: *Home → 0.x OZW672.01 → Settings →
+   Communication → Ethernet*.
+3. Use a dedicated user on the OZW672 for Home Assistant polling — the *Service* user group
+   works well.
+
+HTTPS certificate verification is off by default, because the device ships a self-signed
+certificate. It can be switched on in the options if you installed a trusted one.
+
+## Credits
+
+Original integration by [@johnaherninfotrack](https://github.com/johnaherninfotrack),
+written on an OZW672.01 monitoring a home hydronic plant. This fork builds on that work.
 
 ## Disclaimer
 
@@ -36,60 +83,3 @@ This integration uses the local HTTP API exposed by the device itself and contai
 Siemens source code, firmware, or other proprietary material. Provided under the MIT License
 without warranty of any kind; you use it, and any changes it writes to your equipment, at
 your own risk.
-
-{% if not installed %}
-
-## Installation
-
-1. Click install.
-1. In the HA UI go to "Configuration" -> "Integrations" click "+" and search for "Siemens OZW672".
-
-{% endif %}
-
-## Configuration is done in the UI
-
-NOTE: 
-1. The OZW672 is not very powerful - LIMIT polling only variables you require
-2. In my testing http was more scaleable than https - YOU MUST ENABLE THIS IN THE OZW672
-3. https implementation does NOT check for valid server certificate
-4. The component provides flexbility in naming your entities in two ways:
-    a. No Prefix.  eg. "Legionella function"
-    b. Prefix the datapoint with the Function/MenuItem name eg.  "DHW - Legionella function"
-    c. Prefix the datapoint with the Operating Line number from the manual eg. "1640 Legionella function"
-    d. Both Prefixes - eg: "DHW - 1640 Legionella function"
-5. You can discover entities to poll, then re-run and discover more.  
-
-My recommendations for reliable operation:
-1. Configure the OZW672 to use http. Home > 0.x OZW672.01 > Settings > Communication > Services > We access via http = ON
-2. Configure the OZW672 to use static IP, Gateway & DNS. Home > 0.x OZW672.01 > Settings > Communication > Ethernet
-3. Discover Functions one at a time.  The OZW672 is not powerful - discover one function and max 10 variables at a time.
-4. Configure a dedicated user for your home assistant polling.  I used the "Service" user group.
-
-<!---->
-
-## Credits
-
-This project was created in my spare time on an OZW671.01 monitoring my home Hydronic Plant.  
-
-This project was generated from [@oncleben31](https://github.com/oncleben31)'s [Home Assistant Custom Component Cookiecutter](https://github.com/oncleben31/cookiecutter-homeassistant-custom-component) template.
-
-Code template was mainly taken from [@Ludeeus](https://github.com/ludeeus)'s [integration_blueprint][integration_blueprint] template
-
----
-
-[integration_blueprint]: https://github.com/custom-components/integration_blueprint
-[commits-shield]: https://img.shields.io/github/commit-activity/y/johnaherninfotrack/homeassistant_custom_siemensozw672.svg?style=for-the-badge
-[commits]: https://github.com/:q/commits/main
-[hacs]: https://hacs.xyz
-[hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
-[discord]: https://discord.gg/Qa5fW2R
-[discord-shield]: https://img.shields.io/discord/330944238910963714.svg?style=for-the-badge
-[exampleimg]: example.png
-[forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
-[forum]: https://community.home-assistant.io/
-[license]: https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/blob/main/LICENSE
-[license-shield]: https://img.shields.io/github/license/johnaherninfotrack/homeassistant_custom_siemensozw672.svg?style=for-the-badge
-[maintenance-shield]: https://img.shields.io/badge/maintainer-%40johnaherninfotrack-blue.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/johnaherninfotrack/homeassistant_custom_siemensozw672.svg?style=for-the-badge
-[releases]: https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672/releases
-[user_profile]: https://github.com/johnaherninfotrack
