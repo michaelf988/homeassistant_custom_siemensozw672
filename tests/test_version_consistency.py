@@ -36,6 +36,23 @@ def test_the_config_flow_creates_entries_at_the_current_schema_version():
     assert SiemensOzw672FlowHandler.MINOR_VERSION == CONF_MINOR_VERSION
 
 
+def test_release_notes_come_out_of_the_changelog():
+    """The release workflow uses this as the release body, so it must not be empty."""
+    import subprocess
+    import sys
+
+    notes = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "set_version.py"), "--notes"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    assert notes, "no changelog section for the current version"
+    # The heading itself is not part of the body, and the next version's section
+    # must not bleed into it.
+    assert not notes.startswith("## ")
+    assert "\n## " not in notes
+
+
 def test_manifest_declares_what_home_assistant_expects():
     """hassfest checks these; a missing iot_class is a warning on every start."""
     manifest = json.loads(MANIFEST.read_text())

@@ -52,6 +52,11 @@
   checks that `manifest.json`, `const.VERSION`, the changelog heading and the config
   flow's schema version all agree. It immediately caught `manifest.json` still sitting
   at 0.4.0 while `const.py` had moved to 0.5.0.
+- **The release is cut by the workflow, not by hand.** Running the Release workflow with
+  `publish` ticked builds the archive, tags the commit and publishes the release, taking
+  the release notes from this file's section for the version in `manifest.json` - so the
+  release and the changelog cannot drift apart. It refuses to run if that release already
+  exists. Publishing from the Releases page by hand still works and takes the same path.
 - The release workflow can be dry-run from the Actions tab. It had never executed at
   all, which is a poor thing to discover during an actual release. A manual run does
   everything except the upload and keeps the archive as an artifact, and a new step

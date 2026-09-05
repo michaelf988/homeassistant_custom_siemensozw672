@@ -45,6 +45,26 @@ def write_version(version: str) -> None:
     CONST.write_text(updated)
 
 
+def changelog_section(version: str) -> str:
+    """The changelog body for one version, without its heading.
+
+    Used as the release notes, so the release and the changelog cannot drift.
+    """
+    if not CHANGELOG.exists():
+        return ""
+    lines: list[str] = []
+    capturing = False
+    for line in CHANGELOG.read_text().splitlines():
+        if line.startswith("## "):
+            if capturing:
+                break
+            capturing = line[3:].strip() == version
+            continue
+        if capturing:
+            lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def changelog_has(version: str) -> bool:
     """Whether the changelog already documents this version."""
     if not CHANGELOG.exists():
@@ -59,7 +79,18 @@ def main() -> int:
         "--check", action="store_true",
         help="print the current version instead of setting one",
     )
+    parser.add_argument(
+        "--notes", action="store_true",
+        help="print the changelog section for the current version, for release notes",
+    )
     args = parser.parse_args()
+
+    if args.notes:
+        section = changelog_section(read_version())
+        if not section:
+            raise SystemExit(f"CHANGELOG.md has no section for {read_version()}")
+        print(section)
+        return 0
 
     if args.check or not args.version:
         print(read_version())
