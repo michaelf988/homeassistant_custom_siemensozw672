@@ -35,6 +35,8 @@ from .const import CONF_PRIORITY_FAST
 from .const import CONF_PRIORITY_MEDIUM
 from .const import CONF_GO_BACK
 from .const import CONF_SELECT_ALL
+from .const import CONF_SELECT_REST_SLOW
+from .const import CONF_DATAPOINTS_BY_PRIORITY
 from .const import CONF_INTERVAL_MEDIUM
 from .const import CONF_INTERVAL_SLOW
 from .const import CONF_REQUEST_DELAY
@@ -55,6 +57,8 @@ from .const import MAX_HTTPRETRIES
 
 import copy
 import json
+
+from .helpers import clean_value
 
 
 PROTOCOL_OPTIONS = [
@@ -181,6 +185,43 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # of it without re-deriving the list at submit time.
         self._offered_menuitems = []
         self._offered_datapoints = []
+        # The readings shown next to each datapoint on the current form, reused
+        # once the selection is made so they are not fetched twice.
+        self._preview = {}
+
+    def _datapoint_label(self, dp: dict) -> str:
+        """Offer a datapoint with its current reading beside it.
+
+        A datapoint the device has no value for is worth seeing before it is
+        picked: it costs a request on every poll and stays permanently unknown.
+        """
+        opline = dp.get("Text", {}).get("Id", "")
+        name = dp.get("Text", {}).get("Long", dp["Id"])
+        data = (self._preview.get(dp["Id"]) or {}).get("Data", {})
+        value = clean_value(data.get("Value"))
+        if value is None:
+            return f"{opline} {name} — (no value)"
+        unit = str(data.get("Unit", "")).strip()
+        return f"{opline} {name} — {value}{' ' + unit if unit else ''}"
+
+    def _datapoints_by_tier(self, user_input):
+        """Which datapoints were ticked into which polling tier.
+
+        Returns (assignments, duplicates): a datapoint ticked in more than one
+        tier is a mistake the user has to resolve, not something to guess at.
+        """
+        assignments: dict[str, str] = {}
+        duplicates: list[str] = []
+        for priority, field in CONF_DATAPOINTS_BY_PRIORITY.items():
+            for value in user_input.get(field) or []:
+                if value in assignments:
+                    duplicates.append(value)
+                else:
+                    assignments[value] = priority
+        if user_input.get(CONF_SELECT_REST_SLOW):
+            for value in self._offered_datapoints:
+                assignments.setdefault(value, PRIORITY_SLOW)
+        return assignments, duplicates
 
     def _snapshot(self) -> dict:
         """Everything a step may have changed, deep-copied."""
@@ -207,6 +248,19 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         position of the menu walk, which the step pops from as it renders.
         """
         self._history.append((step, self._snapshot()))
+
+    async def _async_repeat_step(self):
+        """Re-render the form the user is on, keeping self._errors.
+
+        Entering the step again with no input is not the same thing: the submenu
+        step pops the menu queue as it renders, so a plain re-entry advanced past
+        the screen being corrected - and with an empty queue aborted the flow.
+        """
+        if not self._history:
+            return None
+        step, snapshot = self._history.pop()
+        self._restore(snapshot)
+        return await getattr(self, f"async_step_{step}")()
 
     async def _async_go_back(self):
         """Re-render the previous form, or None when this is the first one."""
@@ -292,14 +346,16 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         return await self._show_device_selection_form(user_input)
 
     async def async_step_mainmenu(self, user_input=None):
-        self._errors = {}
         if user_input is not None:
+            # Only a fresh submission clears the errors; re-rendering the form to
+            # show them must not wipe them first.
+            self._errors = {}
             if user_input.get(CONF_GO_BACK):
                 previous = await self._async_go_back()
                 if previous is not None:
                     return previous
                 self._errors["base"] = "no_previous_step"
-                return await self._show_mainmenu_selection_form(user_input)
+                return await self._async_repeat_step()
             selected = self._selected(user_input, CONF_MENUITEMS, self._offered_menuitems)
             self._data[CONF_MENUITEMS]=selected
             self._alldevicemenuitems=list(selected)
@@ -313,23 +369,39 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_submenu(self, user_input=None):
         _LOGGER.debug(f"async_step_submenu - user_input: {user_input}")
-        self._errors = {}
         if user_input is not None:
+            self._errors = {}
             if user_input.get(CONF_GO_BACK):
                 previous = await self._async_go_back()
                 if previous is not None:
                     return previous
                 self._errors["base"] = "no_previous_step"
-                return await self.async_step_submenu()
+                return await self._async_repeat_step()
             ###### WE NEED TO PROCESS SELECTED SUBMENUS HERE
+            assignments, duplicates = self._datapoints_by_tier(user_input)
+            if duplicates:
+                # Exactly one tier per datapoint; say which ones are ambiguous
+                # rather than silently picking for the user.
+                names = ", ".join(
+                    json.loads(value).get("Text", {}).get("Long", value)
+                    for value in duplicates
+                )
+                _LOGGER.warning("Datapoints assigned to more than one tier: %s", names)
+                self._errors["base"] = "duplicate_priority"
+                return await self._async_repeat_step()
             submenus = self._selected(user_input, CONF_MENUITEMS, self._offered_menuitems)
-            datapoints = self._selected(user_input, CONF_DATAPOINTS, self._offered_datapoints)
+            datapoints = list(assignments)
             for submenu in submenus:
                 _LOGGER.debug(f'Appending {submenu} in MenuItems to discover')
                 self._alldevicemenuitems.append(submenu)
             if datapoints:
-                # Get DP Data as we need this to determine type.
-                all_dpdata = await self._get_data(datapoints)
+                # The readings were already fetched to label the form; only the
+                # descriptions still have to be asked for.
+                all_dpdata = {
+                    json.loads(value)["Id"]: self._preview[json.loads(value)["Id"]]
+                    for value in datapoints
+                    if json.loads(value)["Id"] in self._preview
+                } or await self._get_data(datapoints)
                 _LOGGER.debug(f'async_step_submenu **** Intial DP Data: {all_dpdata}')
                 all_dpdescr = await self._get_data_descr(datapoints, all_dpdata)
                 _LOGGER.debug(f'async_step_submenu **** Initial DP Descriptions: {all_dpdescr}')
@@ -337,7 +409,7 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     dpjson=json.loads(dp)
                     dpdescr = all_dpdescr[dpjson["Id"]]["Description"]
                     _LOGGER.debug(f'async_step_submenu - "Id": {dpjson["Id"]},"WriteAccess": {dpjson["WriteAccess"]},"OpLine": {dpjson["Text"]["Id"]}, "Name": {dpjson["Text"]["Long"]},"MenuItem": {dpjson["MenuItem"]}, "DPDescr": {dpdescr} ')
-                    self._datapoints.append({"Id": dpjson["Id"],"WriteAccess": dpjson["WriteAccess"],"OpLine": dpjson["Text"]["Id"], "Name": dpjson["Text"]["Long"],"MenuItem": dpjson["MenuItem"], "DPDescr": dpdescr })
+                    self._datapoints.append({"Id": dpjson["Id"],"WriteAccess": dpjson["WriteAccess"],"OpLine": dpjson["Text"]["Id"], "Name": dpjson["Text"]["Long"],"MenuItem": dpjson["MenuItem"], "DPDescr": dpdescr, CONF_PRIORITY: assignments[dp] })
             self._data[CONF_DATAPOINTS]=self._datapoints
             _LOGGER.debug(f"DATAPOINTS: {self._data[CONF_DATAPOINTS]}")
             if len(self._alldevicemenuitems) > 0:
@@ -345,7 +417,7 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("****** Recursing further through menu ******")
                 return await self.async_step_submenu()
             else: ### FINALLY... Create our discovered entities. ###
-                return await self.async_step_priorities()
+                return self._async_finish()
         else:
             if len(self._alldevicemenuitems) > 0:
                 self._remember("submenu")
@@ -359,33 +431,6 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 # walk through. Returning None here made Home Assistant raise on
                 # a flow step that produced no result.
                 return self.async_abort(reason="no_menu_items")
-
-    async def async_step_priorities(self, user_input=None):
-        """Assign each selected datapoint to a polling tier.
-
-        The OZW672 is a small embedded web server and every datapoint costs it one
-        HTTP request per poll, so polling everything at the same rate is what makes
-        a large selection painful. Anything not raised here stays in the slowest
-        tier, which is the safe default for a device this size.
-        """
-        self._errors = {}
-        if user_input is not None:
-            if user_input.get(CONF_GO_BACK):
-                previous = await self._async_go_back()
-                if previous is not None:
-                    return previous
-                self._errors["base"] = "no_previous_step"
-                return await self.async_step_priorities()
-            self._datapoints = apply_priorities(self._datapoints, user_input)
-            self._data[CONF_DATAPOINTS] = self._datapoints
-            return self._async_finish()
-        self._remember("priorities")
-        return self.async_show_form(
-            step_id="priorities",
-            data_schema=priority_schema(self._datapoints, with_back=True),
-            description_placeholders={"count": str(len(self._datapoints))},
-            errors=self._errors,
-        )
 
     def _async_finish(self):
         """Create the config entry, or update the one this device already has."""
@@ -523,6 +568,7 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             menu["MenuItem"]=menutree_menulocation
             menuitem_list_selector.append(selector.SelectOptionDict(value=json.dumps(menu), label=menu["Text"]["Long"]) )
 
+        offerable = []
         for dp in new_dp_items:
             ### If we are already polling a variable - don't list it.
             already_exists=False
@@ -533,7 +579,20 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             ### If this is something new to monitor - add it to our Dict.
             if not already_exists:
                 dp["MenuItem"]=menutree_menulocation
-                datapoint_list_selector.append(selector.SelectOptionDict(value=json.dumps(dp), label=dp["Text"]["Long"]))
+                offerable.append(dp)
+
+        # Read the current values before offering the datapoints. Plenty of them
+        # carry no reading at all on a given plant, and picking those costs a
+        # request per poll for a permanently unknown entity. The readings are kept
+        # and reused once the selection is made, so the only extra traffic is for
+        # the datapoints that end up not being selected.
+        self._preview = await self._get_data([json.dumps(dp) for dp in offerable]) or {}
+        for dp in offerable:
+            datapoint_list_selector.append(
+                selector.SelectOptionDict(
+                    value=json.dumps(dp), label=self._datapoint_label(dp)
+                )
+            )
         self._offered_menuitems = [option["value"] for option in menuitem_list_selector]
         self._offered_datapoints = [option["value"] for option in datapoint_list_selector]
 
@@ -544,11 +603,15 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         schema: dict = {}
         if menuitem_list_selector:
             schema[vol.Optional(CONF_MENUITEMS, default=[])] = checkbox_list(menuitem_list_selector)
+            schema[vol.Optional(CONF_SELECT_ALL, default=False)] = bool
         if datapoint_list_selector:
-            schema[vol.Optional(CONF_DATAPOINTS, default=[])] = checkbox_list(datapoint_list_selector)
-        this_data_schema = vol.Schema(
-            back_and_select_all(schema, offer_select_all=bool(schema))
-        )
+            # One list per polling tier: Home Assistant has no per-row radio group,
+            # so which list a datapoint is ticked in is how its tier is chosen.
+            for priority, field in CONF_DATAPOINTS_BY_PRIORITY.items():
+                schema[vol.Optional(field, default=[])] = checkbox_list(datapoint_list_selector)
+            schema[vol.Optional(CONF_SELECT_REST_SLOW, default=False)] = bool
+        schema[vol.Optional(CONF_GO_BACK, default=False)] = bool
+        this_data_schema = vol.Schema(schema)
         _LOGGER.debug(f'Data schema: {this_data_schema}')
         return self.async_show_form(
             step_id="submenu",
@@ -635,7 +698,9 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
         if self.options is None:
             self.options = dict(self.config_entry.options)
             _LOGGER.debug(f'OptionsFlow - Existing options: {self.options}')
-        return self.async_show_menu(step_id="init", menu_options=["settings", "priorities"])
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "priorities", "datapoints"]
+        )
 
     async def async_step_settings(self, user_input=None):
         """Connection settings, poll intervals and which entity domains are on."""
@@ -705,6 +770,64 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=priority_schema(datapoints),
             description_placeholders={"count": str(len(datapoints))},
         )
+
+    async def async_step_datapoints(self, user_input=None):
+        """Remove datapoints from an entry without redoing the whole setup.
+
+        Disabling an entity in Home Assistant does not stop the datapoint being
+        polled - the coordinator knows datapoints, not entity states - so on a
+        device this slow, dropping one is the only way to actually stop paying
+        for it. Adding datapoints is the other direction, and is done by running
+        the setup again for the same device.
+        """
+        configured = self.config_entry.data.get(CONF_DATAPOINTS) or []
+        if user_input is not None:
+            keep = set(user_input.get(CONF_DATAPOINTS) or [])
+            remaining = [dp for dp in configured if dp["Id"] in keep]
+            removed = len(configured) - len(remaining)
+            if removed:
+                _LOGGER.info(
+                    "Removing %d datapoint(s); their entities stay in the registry "
+                    "as unavailable and can be deleted there", removed,
+                )
+                data = dict(self.config_entry.data)
+                data[CONF_DATAPOINTS] = remaining
+                self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+            return self._update_options()
+
+        runtime = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        options = [
+            selector.SelectOptionDict(
+                value=dp["Id"], label=self._configured_label(dp, runtime)
+            )
+            for dp in configured
+        ]
+        return self.async_show_form(
+            step_id="datapoints",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_DATAPOINTS, default=[dp["Id"] for dp in configured]
+                ): checkbox_list(options),
+            }),
+            description_placeholders={"count": str(len(configured))},
+        )
+
+    @staticmethod
+    def _configured_label(dp: dict, runtime) -> str:
+        """A configured datapoint, with the reading the last poll produced.
+
+        The value is free here: it is whatever is already in the coordinator, so
+        nothing is asked of the device to draw this screen.
+        """
+        label = f'{dp.get("MenuItem", "")} - {dp.get("OpLine", "")} {dp.get("Name", dp["Id"])}'
+        if runtime is None:
+            return label
+        for coordinator in runtime.coordinators.values():
+            reading = (coordinator.data or {}).get(dp["Id"])
+            if reading:
+                value = clean_value(reading.get("Data", {}).get("Value"))
+                return f"{label} — {value if value is not None else '(no value)'}"
+        return f"{label} — (not polled yet)"
 
     def _update_options(self):
         """Update config entry options.

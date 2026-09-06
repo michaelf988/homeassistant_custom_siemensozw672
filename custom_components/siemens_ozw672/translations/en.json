@@ -33,20 +33,14 @@
       },
       "submenu": {
         "title": "Siemens OZW672 - Menu: {item_name}",
-        "description": "Select the Menu Items and/or Data Points to monitor",
+        "description": "Select what to monitor under {item_name}. Each datapoint is shown with the value the device reports right now — one with no value costs a request on every poll and stays permanently unknown.\n\nTick a datapoint in the list for the polling rate it needs. Each datapoint belongs in exactly one.",
         "data": {
-          "menuitems": "Select one or more Submenu Items",
-          "datapoints": "Select one or more Data Points",
-          "go_back": "◀ Go back to the previous step (discards what is selected here)",
-          "select_all": "Select everything offered above"
-        }
-      },
-      "priorities": {
-        "title": "Siemens OZW672 - Polling priorities",
-        "description": "The OZW672 reads one datapoint per HTTP request, so polling everything at the same rate is what makes a large selection slow. Pick the {count} selected datapoints that need to be current.\n\nAnything you do not pick here is polled in the slowest tier.",
-        "data": {
-          "priority_fast": "Poll frequently (priority 1)",
-          "priority_medium": "Poll at a medium rate (priority 2)",
+          "menuitems": "Submenus to look inside",
+          "datapoints_fast": "Poll frequently — priority 1",
+          "datapoints_medium": "Poll at a medium rate — priority 2",
+          "datapoints_slow": "Poll rarely — priority 3",
+          "select_all": "Look inside every submenu listed above",
+          "select_rest_slow": "Also take everything else on this screen at priority 3",
           "go_back": "◀ Go back to the previous step (discards what is selected here)"
         }
       }
@@ -56,7 +50,8 @@
       "cannot_connect": "Failed to connect to the OZW672. Check the hostname/IP and that the device is reachable.",
       "device_selection_error": "Unexpected Error",
       "timeout": "Timeout connecting to the device.",
-      "no_previous_step": "This is the first step of the setup, there is nothing to go back to."
+      "no_previous_step": "This is the first step of the setup, there is nothing to go back to.",
+      "duplicate_priority": "A datapoint is ticked in more than one priority. Each one belongs in exactly one — see the log for which."
     },
     "abort": {
       "single_instance_allowed": "Only a single instance is allowed.",
@@ -70,7 +65,8 @@
         "title": "Siemens OZW672",
         "menu_options": {
           "settings": "Connection, polling intervals and entity domains",
-          "priorities": "Which datapoints are polled how often"
+          "priorities": "Which datapoints are polled how often",
+          "datapoints": "Which datapoints are configured"
         }
       },
       "settings": {
@@ -98,6 +94,13 @@
         "data": {
           "priority_fast": "Poll frequently (priority 1)",
           "priority_medium": "Poll at a medium rate (priority 2)"
+        }
+      },
+      "datapoints": {
+        "title": "Siemens OZW672 - Configured datapoints",
+        "description": "{count} datapoints are configured. Untick one to stop polling it.\n\nDisabling an entity in Home Assistant does not stop its datapoint being polled — removing it here does. The entity stays in the registry as unavailable and can be deleted there.\n\nTo add datapoints, run the integration's setup again for the same device.",
+        "data": {
+          "datapoints": "Keep polling"
         }
       }
     }

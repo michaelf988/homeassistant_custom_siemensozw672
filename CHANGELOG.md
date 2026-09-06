@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- **Datapoints are offered with the value the device currently reports.** Plenty of
+  datapoints do not apply to a given plant and read `----`; picking one costs a request
+  on every poll forever and produces a permanently unknown entity. The selection screen
+  now shows `700 Betriebsart HK1 — Schutzbetrieb` or `742 Vorlaufsollwert — (no value)`,
+  so that is visible before it is chosen. The readings are reused for the selection
+  itself, so the only extra traffic is for datapoints that end up not being picked.
+- **The polling tier is chosen on the same screen as the datapoint.** One checkbox list
+  per tier — Home Assistant cannot render a per-row radio group, so this is as close as
+  it gets. A datapoint ticked in more than one tier is rejected with an error naming the
+  offenders in the log, rather than the flow guessing.
+
+  *Also take everything else on this screen at priority 3* sweeps up the remainder, so
+  the common case is: tick the few that need to be current, then one box for the rest.
+
+  The closing screen that listed every configured datapoint is gone — with 217
+  datapoints it was unusable, which is what prompted this.
+- **Datapoints can be removed after setup**, under the integration's options →
+  *Which datapoints are configured*. Each is shown with its last reading, which costs
+  nothing because it is already in the coordinator. This matters on this hardware:
+  disabling an entity in Home Assistant does **not** stop its datapoint being polled —
+  the coordinator knows datapoints, not entity states — so removing it here is the only
+  way to actually stop paying for it.
+
+  Adding datapoints already worked: run the setup again for the same device and only the
+  not-yet-configured ones are offered.
+
+### Fixed
+
+- A validation error on a selection screen **aborted the whole setup**. Re-entering the
+  step to redisplay the form walked the menu queue on instead of re-rendering, and with
+  an empty queue that aborted the flow. Found by the first test written for the new
+  duplicate-tier check.
+
 ## 0.8.0
 
 ### Fixed
