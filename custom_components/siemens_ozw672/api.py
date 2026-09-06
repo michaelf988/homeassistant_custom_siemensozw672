@@ -297,11 +297,17 @@ class SiemensOzw672ApiClient:
                         response["Description"]["HAType"] = "number"
                     else:
                         response["Description"]["HAType"] = "sensor"
+                elif response["Description"]["Type"] == "TimeOfDay":
+                    # A writeable time of day is a time entity; a read-only one has
+                    # nowhere better to go than a sensor. Between 0.4.0 and 0.5.0
+                    # both were sensors, because the "time" HAType this restores was
+                    # claimed by no platform and those datapoints vanished silently.
+                    if writeable == "true":
+                        response["Description"]["HAType"] = "time"
+                    else:
+                        response["Description"]["HAType"] = "sensor"
                 else:
-                    # Everything else - including TimeOfDay - becomes a read-only
-                    # sensor. TimeOfDay used to be mapped to a "time" HAType, but
-                    # there is no time platform in this integration, so no platform
-                    # ever claimed those datapoints and they vanished without a trace.
+                    # Everything else becomes a read-only sensor.
                     response["Description"]["HAType"] = "sensor"
                 consolidated_response[id] = response
         _LOGGER.debug(f"async_get_data_descr DatapointItem description reponse: {consolidated_response}")

@@ -26,6 +26,7 @@ from custom_components.siemens_ozw672.const import (
     PRIORITY_FAST,
 )
 
+
 LEGACY_DATAPOINTS = [
     {"Id": "1960", "OpLine": "39", "Name": "Outside temp", "MenuItem": "Diagnostics",
      "WriteAccess": "false", "DPDescr": {"Type": "Numeric", "HAType": "sensor"}},
@@ -121,3 +122,54 @@ async def test_older_entries_still_run_the_description_refresh(hass):
     stored = {dp["Id"]: dp for dp in entry.data[CONF_DATAPOINTS]}
     assert stored["1439"]["DPDescr"]["Unit"] == "°C"
     assert stored["1439"][CONF_PRIORITY] == DEFAULT_PRIORITY
+
+
+TIME_OF_DAY = {
+    "Id": "1970", "OpLine": "3560", "Name": "Standby start", "MenuItem": "Heating",
+    "WriteAccess": "true",
+    # How 0.4.0 and 0.5.0 stored it: a sensor, because no platform claimed "time".
+    "DPDescr": {"Type": "TimeOfDay", "HAType": "sensor"},
+    CONF_PRIORITY: DEFAULT_PRIORITY,
+}
+
+
+async def test_writeable_time_of_day_is_promoted_to_a_time_entity(hass):
+    """Entries written before the time platform existed pick it up on migration."""
+    entry = _entry(hass, minor_version=6, datapoints=[TIME_OF_DAY])
+
+    assert await async_migrate_entry(hass, entry) is True
+
+    assert entry.data[CONF_DATAPOINTS][0]["DPDescr"]["HAType"] == "time"
+    assert entry.minor_version == CONF_MINOR_VERSION
+
+
+async def test_a_read_only_time_of_day_stays_a_sensor(hass):
+    """Only writeable ones become time entities; there is nothing to set otherwise."""
+    read_only = {**TIME_OF_DAY, "WriteAccess": "false"}
+    entry = _entry(hass, minor_version=6, datapoints=[read_only])
+
+    assert await async_migrate_entry(hass, entry) is True
+
+    assert entry.data[CONF_DATAPOINTS][0]["DPDescr"]["HAType"] == "sensor"
+
+
+async def test_promotion_does_not_touch_the_device(hass):
+    """Another purely local step that must not re-read every description."""
+    entry = _entry(hass, minor_version=6, datapoints=[TIME_OF_DAY])
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data"
+    ) as data:
+        assert await async_migrate_entry(hass, entry) is True
+
+    data.assert_not_called()
+
+
+async def test_other_datapoints_are_left_alone(hass):
+    """The promotion is narrow: nothing else changes classification."""
+    entry = _entry(hass, minor_version=6)
+
+    assert await async_migrate_entry(hass, entry) is True
+
+    types = {dp["Id"]: dp["DPDescr"]["HAType"] for dp in entry.data[CONF_DATAPOINTS]}
+    assert types == {"1960": "sensor", "1439": "number"}

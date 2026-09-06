@@ -225,6 +225,15 @@ async def async_migrate_entry(hass, entry: ConfigEntry):
                 DEFAULT_PRIORITY, len(data[CONF_DATAPOINTS]),
             )
 
+        if entry.minor_version < 7:
+            # Re-classify writeable TimeOfDay datapoints. 0.4.0 and 0.5.0 stored them
+            # as sensors because no platform claimed the "time" HAType; there is a
+            # time platform now. Purely local - the device is not contacted.
+            data[CONF_DATAPOINTS] = [
+                _reclassify_time_of_day(datapoint)
+                for datapoint in (data.get(CONF_DATAPOINTS) or [])
+            ]
+
         hass.config_entries.async_update_entry(
             entry, data=data, minor_version=CONF_MINOR_VERSION, version=CONF_VERSION
         )
@@ -233,6 +242,26 @@ async def async_migrate_entry(hass, entry: ConfigEntry):
     except Exception as exception:  # pylint: disable=broad-except
         _LOGGER.error(f'Config Check Failed: {repr(exception)}')
         return False
+
+
+def _reclassify_time_of_day(datapoint: dict) -> dict:
+    """Promote a writeable TimeOfDay datapoint from sensor to time entity.
+
+    The old sensor entity is left behind in the registry; Home Assistant shows it
+    as unavailable and it can be deleted. There is no way to move an entity
+    between domains without that.
+    """
+    descr = datapoint.get("DPDescr") or {}
+    if descr.get("Type") != "TimeOfDay" or datapoint.get("WriteAccess") != "true":
+        return datapoint
+    if descr.get("HAType") == "time":
+        return datapoint
+    _LOGGER.info(
+        "Datapoint %s (%s) is a writeable time of day and becomes a time entity; "
+        "its old sensor entity can be deleted",
+        datapoint.get("Id"), datapoint.get("Name"),
+    )
+    return {**datapoint, "DPDescr": {**descr, "HAType": "time"}}
 
 
 async def _migrate_to_1_5(hass, entry: ConfigEntry, data: dict) -> dict:

@@ -81,7 +81,8 @@
           "verify_ssl": "Verify the HTTPS certificate (leave off for the device's self-signed certificate)",
           "interval_medium": "Polling interval, priority 2 - medium (sec)",
           "interval_slow": "Polling interval, priority 3 - slow (sec)",
-          "request_delay": "Pause between requests (sec, 0 = none)"
+          "request_delay": "Pause between requests (sec, 0 = none)",
+          "time": "Time domain enabled"
         },
         "title": "Siemens OZW672 - Settings"
       },

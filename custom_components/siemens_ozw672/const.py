@@ -3,9 +3,9 @@
 NAME = "Siemens OZW672"
 DOMAIN = "siemens_ozw672"
 DOMAIN_DATA = f"{DOMAIN}_data"
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 CONF_VERSION = 1
-CONF_MINOR_VERSION = 6
+CONF_MINOR_VERSION = 7
 
 ATTRIBUTION = "Siemens OZW672 integration, originally created by John Ahern"
 # Shown as the device manufacturer in Home Assistant. Nominative use only - see
@@ -23,6 +23,7 @@ ICON_SWITCH="mdi:toggle-switch"
 ICON_SELECT="mdi:gesture-tap"
 ICON_NUMERIC="mdi:numeric"
 ICON_POWER="mdi:lightning-bolt"
+ICON_TIME="mdi:clock-outline"
 
 
 
@@ -36,7 +37,8 @@ SENSOR = "sensor"
 SWITCH = "switch"
 SELECT = "select"
 NUMBER = "number"
-PLATFORMS = [SWITCH, SELECT, NUMBER, BINARY_SENSOR, SENSOR]
+TIME = "time"
+PLATFORMS = [SWITCH, SELECT, NUMBER, TIME, BINARY_SENSOR, SENSOR]
 
 
 # Configuration and options
@@ -126,7 +128,8 @@ DEFAULT_OPTIONS = {'httptimeout': DEFAULT_HTTPTIMEOUT,
     CONF_INTERVAL_MEDIUM: DEFAULT_INTERVAL_MEDIUM,
     CONF_INTERVAL_SLOW: DEFAULT_INTERVAL_SLOW,
     CONF_REQUEST_DELAY: DEFAULT_REQUEST_DELAY,
-    'switch': True, 'select': True, 'number': True, 'binary_sensor': True, 'sensor': True
+    'switch': True, 'select': True, 'number': True, 'time': True,
+    'binary_sensor': True, 'sensor': True
 }
 
 # Defaults
@@ -169,6 +172,7 @@ TESTDATA["DATAPOINT"]["1441"]="""{"Data": {"Type": "Enumeration", "Value": "24h/
 TESTDATA["DATAPOINT"]["1960"]="""{"Data": {"Type": "Numeric","Value": " 15.8","Unit": "°C"}, "Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINT"]["1963"]="""{"Data": {"Type": "Numeric","Value": "----","Unit": "\u00b0C"}, "Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINT"]["1966"]="""{"Data": {"Type": "RadioButton","Value": "On","Unit": ""},"Result": {"Success": "true"}}"""
+TESTDATA["DATAPOINT"]["1970"]="""{"Data": {"Type": "TimeOfDay","Value": "06:30","Unit": ""}, "Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINT"]["1962"]="""{"Data": {"Type": "Numeric","Value": " 120.0","Unit": "kWh"}, "Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINT"]["1961"]="""{"Data": {"Type": "Numeric","Value": " 15.0","Unit": "kWh"}, "Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINT"]["9999"]="""{"Data": {"Type": "RadioButton","Value": "On","Unit": ""},"Result": {"Success": "true"}}"""
@@ -180,6 +184,7 @@ TESTDATA["DATAPOINTDESCR"]["1441"]="""{"Description":{"Type":"Enumeration","Name
 TESTDATA["DATAPOINTDESCR"]["1960"]="""{"Description":{"Type":"Numeric","Value":"15.859375","Unit":"°C","Name":"Outside temp","Min":"-50.000000","Max":"50.000000","Resolution":"0.100000","FieldWitdh":"12","DecimalDigits":"1","HasValid":"false","IsValid":"true"},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1966"]="""{"Description":{"Type":"RadioButton","Name": "Status heat circuit pump 1","Buttons":[{"TextOpt0": "Off","TextOpt1": "On","Significance": "1","IsActive": "true"} ]},"Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1961"]="""{"Description":{"Type":"Numeric","Value":"15.0","Unit":"kWh","Name":"Test Generic Number","Min":"0.000000","Max":"2147483647.0000005","Resolution":"1.000000","FieldWitdh":"10","DecimalDigits":"0","HasValid":"false","IsValid":"true"},"Result":{"Success":"true"}}"""
+TESTDATA["DATAPOINTDESCR"]["1970"]="""{"Description":{"Type":"TimeOfDay","Name":"Standby start"},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1962"]="""{"Description":{"Type":"Numeric","Value":"120.0","Unit":"kWh","Name":"Test Writeable Energy","Min":"0.000000","Max":"100000.000000","Resolution":"1.000000","FieldWitdh":"10","DecimalDigits":"1","HasValid":"false","IsValid":"true"},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["9999"]="""{"Description":{"Type":"RadioButton","Name": "Test Submenu DataPoint1","Buttons":[{"TextOpt0": "Off","TextOpt1": "On","Significance": "1","IsActive": "true"} ]},"Result": {"Success": "true"}}"""
 

@@ -592,6 +592,7 @@ class SiemensOzw672OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required("switch", default=self.options.get("switch", True)): bool,
                     vol.Required("select", default=self.options.get("select", True)): bool,
                     vol.Required("number", default=self.options.get("number", True)): bool,
+                    vol.Required("time", default=self.options.get("time", True)): bool,
                     vol.Required("binary_sensor", default=self.options.get("binary_sensor", True)): bool,
                     vol.Required("sensor", default=self.options.get("sensor", True)): bool,
                 }

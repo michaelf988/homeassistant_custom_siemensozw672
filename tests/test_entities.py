@@ -64,6 +64,8 @@ DATAPOINTS = [
                {"Text": "Heating programs with forward shift", "Value": "1"},
                {"Text": "Time switch program 4", "Value": "2"}]),
     _dp("1966", "5328", "Heat circuit pump 1", "RadioButton", "binarysensor"),
+    # A writeable switching time - the shape the time platform exists for.
+    _dp("1970", "3560", "Standby start", "TimeOfDay", "time"),
 ]
 
 
@@ -131,6 +133,7 @@ DHW_SETPOINT = "3516"
 DHW_MODE = "3514"
 DHW_RELEASE = "3522"
 PUMP = "5328"
+STANDBY_START = "3560"
 
 
 async def test_every_platform_produces_its_entities(hass):
@@ -144,6 +147,7 @@ async def test_every_platform_produces_its_entities(hass):
     assert _state(hass, "switch", DHW_MODE) is not None
     assert _state(hass, "select", DHW_RELEASE) is not None
     assert _state(hass, "binary_sensor", PUMP) is not None
+    assert _state(hass, "time", STANDBY_START) is not None
 
 
 async def test_writeable_energy_entity_renders(hass):
@@ -313,3 +317,59 @@ async def test_unload_removes_the_coordinator(hass):
     await hass.async_block_till_done()
 
     assert entry.entry_id not in hass.data[DOMAIN]
+
+
+async def test_writeable_time_of_day_becomes_a_time_entity(hass):
+    """Writeable TimeOfDay datapoints were discovered and then silently dropped.
+
+    api.py classified them as a "time" HAType that no platform claimed, so between
+    0.4.0 and 0.5.0 they produced no entity at all and nothing said so.
+    """
+    await _setup(hass)
+
+    state = _state(hass, "time", STANDBY_START)
+    assert state.state == "06:30:00"
+    assert state.attributes["icon"] == "mdi:clock-outline"
+
+
+async def test_an_unreadable_time_is_unknown(hass):
+    """An undocumented wire format must not become a plausible but wrong time."""
+    datapoints = copy.deepcopy(DATAPOINTS)
+    for datapoint in datapoints:
+        if datapoint["Id"] == "1970":
+            datapoint["Id"] = "1963"  # a datapoint whose value is the "----" sentinel
+
+    await _setup(hass, datapoints=datapoints)
+
+    assert _state(hass, "time", STANDBY_START).state == "unknown"
+
+
+async def test_setting_a_time_writes_it_in_the_reported_shape(hass):
+    """The write matches how the device renders its own reading."""
+    from datetime import time as dt_time
+    from unittest.mock import AsyncMock, patch
+
+    entry = await _setup(hass)
+    entity_id = _entity_id(hass, "time", STANDBY_START)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ) as write:
+        await hass.services.async_call(
+            "time", "set_value",
+            {"entity_id": entity_id, "time": dt_time(21, 45)},
+            blocking=True,
+        )
+
+    # The reading is "06:30", so the write carries no seconds either.
+    assert write.await_args.args[1] == "21:45"
+    assert write.await_args.args[0]["Id"] == "1970"
+    assert entry.entry_id in hass.data[DOMAIN]
+
+
+async def test_the_time_domain_can_be_switched_off(hass):
+    """The new domain has its own toggle like the other five."""
+    await _setup(hass, options={"time": False})
+
+    assert _entity_id(hass, "time", STANDBY_START) is None

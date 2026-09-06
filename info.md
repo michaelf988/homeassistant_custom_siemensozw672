@@ -15,6 +15,7 @@ maintained by [@michaelf988](https://github.com/michaelf988). Report issues with
 | `switch` | Read/write `On` / `Off` |
 | `select` | Read/write enumerations |
 | `number` | Read/write numbers, e.g. a temperature |
+| `time` | Read/write times of day, e.g. a programme switching time |
 
 ![example](example.png)
 
