@@ -33,6 +33,8 @@ from .const import CONF_MINOR_VERSION
 from .const import CONF_PRIORITY
 from .const import CONF_PRIORITY_FAST
 from .const import CONF_PRIORITY_MEDIUM
+from .const import CONF_GO_BACK
+from .const import CONF_SELECT_ALL
 from .const import CONF_INTERVAL_MEDIUM
 from .const import CONF_INTERVAL_SLOW
 from .const import CONF_REQUEST_DELAY
@@ -51,6 +53,7 @@ from .const import MAX_HTTPTIMEOUT
 from .const import MIN_HTTPRETRIES
 from .const import MAX_HTTPRETRIES
 
+import copy
 import json
 
 from .helpers import datapoint_priority
@@ -66,7 +69,31 @@ import logging
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
-def priority_schema(datapoints):
+def checkbox_list(options, multiple=True):
+    """A checkbox list rather than the default dropdown.
+
+    SelectSelectorMode.LIST is what makes the frontend render checkboxes; the
+    default DROPDOWN hides every option behind a search field, which is painful
+    when the point of the screen is to see what is on offer and tick some of it.
+    """
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=options,
+            multiple=multiple,
+            mode=selector.SelectSelectorMode.LIST,
+        )
+    )
+
+
+def back_and_select_all(schema: dict, offer_select_all: bool = True) -> dict:
+    """Add the navigation controls Home Assistant does not provide itself."""
+    if offer_select_all:
+        schema[vol.Optional(CONF_SELECT_ALL, default=False)] = bool
+    schema[vol.Optional(CONF_GO_BACK, default=False)] = bool
+    return schema
+
+
+def priority_schema(datapoints, with_back: bool = False):
     """Two multi-selects that sort datapoints into the fast and medium tiers.
 
     Anything left unselected stays in the slow tier, so the safe default for a
@@ -85,16 +112,15 @@ def priority_schema(datapoints):
         priority: [dp["Id"] for dp in datapoints if datapoint_priority(dp) == priority]
         for priority in (PRIORITY_FAST, PRIORITY_MEDIUM)
     }
-    return vol.Schema({
+    schema = {
         vol.Optional(CONF_PRIORITY_FAST, default=current[PRIORITY_FAST]):
-            selector.SelectSelector(
-                selector.SelectSelectorConfig(options=options, multiple=True)
-            ),
+            checkbox_list(options),
         vol.Optional(CONF_PRIORITY_MEDIUM, default=current[PRIORITY_MEDIUM]):
-            selector.SelectSelector(
-                selector.SelectSelectorConfig(options=options, multiple=True)
-            ),
-    })
+            checkbox_list(options),
+    }
+    if with_back:
+        schema[vol.Optional(CONF_GO_BACK, default=False)] = bool
+    return vol.Schema(schema)
 
 
 def apply_priorities(datapoints, user_input):
@@ -142,6 +168,56 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # Set when the selected device is already configured, so the final step
         # updates that entry instead of creating a duplicate one beside it.
         self._existing_entry = None
+        # Home Assistant config flows have no back navigation - no button, and no
+        # FlowResultType for one - so the flow snapshots its own state before each
+        # form and can restore it. Entries are (step_id, snapshot).
+        self._history = []
+        # What the form currently on screen offered, so "select all" can mean all
+        # of it without re-deriving the list at submit time.
+        self._offered_menuitems = []
+        self._offered_datapoints = []
+
+    def _snapshot(self) -> dict:
+        """Everything a step may have changed, deep-copied."""
+        return copy.deepcopy({
+            "data": self._data,
+            "datapoints": self._datapoints,
+            "queue": self._alldevicemenuitems,
+            "options": self._options,
+            "devicemenuitems": self._devicemenuitems,
+        })
+
+    def _restore(self, snapshot: dict) -> None:
+        self._data = snapshot["data"]
+        self._datapoints = snapshot["datapoints"]
+        self._alldevicemenuitems = snapshot["queue"]
+        self._options = snapshot["options"]
+        self._devicemenuitems = snapshot["devicemenuitems"]
+
+    def _remember(self, step: str) -> None:
+        """Record the state a form is about to be rendered from.
+
+        Called immediately before showing a form, so restoring the snapshot and
+        re-entering the step reproduces exactly that form - including the queue
+        position of the menu walk, which the step pops from as it renders.
+        """
+        self._history.append((step, self._snapshot()))
+
+    async def _async_go_back(self):
+        """Re-render the previous form, or None when this is the first one."""
+        if len(self._history) < 2:
+            return None
+        self._history.pop()  # the form the user is looking at
+        step, snapshot = self._history.pop()
+        self._restore(snapshot)
+        _LOGGER.debug("Going back to step %s", step)
+        return await getattr(self, f"async_step_{step}")()
+
+    def _selected(self, user_input, key, offered):
+        """What the user picked, or everything offered if they ticked select-all."""
+        if user_input.get(CONF_SELECT_ALL):
+            return list(offered)
+        return user_input.get(key) or []
 
     async def async_step_user(self, user_input=None):
         """Handle a flow initialized by the user."""
@@ -213,8 +289,15 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_mainmenu(self, user_input=None):
         self._errors = {}
         if user_input is not None:
-            self._data[CONF_MENUITEMS]=user_input[CONF_MENUITEMS]
-            self._alldevicemenuitems=user_input[CONF_MENUITEMS]
+            if user_input.get(CONF_GO_BACK):
+                previous = await self._async_go_back()
+                if previous is not None:
+                    return previous
+                self._errors["base"] = "no_previous_step"
+                return await self._show_mainmenu_selection_form(user_input)
+            selected = self._selected(user_input, CONF_MENUITEMS, self._offered_menuitems)
+            self._data[CONF_MENUITEMS]=selected
+            self._alldevicemenuitems=list(selected)
             _LOGGER.debug(f"Found: CONF_MENUITEMS: {self._data[CONF_MENUITEMS]}")
             ### Now we have selected a list of Functions/MenuItems/DataPointItmes to monitor, recursively call a function to enable the user to select entities to monitor.
             return await self.async_step_submenu()
@@ -227,18 +310,25 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug(f"async_step_submenu - user_input: {user_input}")
         self._errors = {}
         if user_input is not None:
+            if user_input.get(CONF_GO_BACK):
+                previous = await self._async_go_back()
+                if previous is not None:
+                    return previous
+                self._errors["base"] = "no_previous_step"
+                return await self.async_step_submenu()
             ###### WE NEED TO PROCESS SELECTED SUBMENUS HERE
-            if CONF_MENUITEMS in user_input:
-                for submenu in user_input[CONF_MENUITEMS]:
-                    _LOGGER.debug(f'Appending {submenu} in MenuItems to discover')
-                    self._alldevicemenuitems.append(submenu)
-            if CONF_DATAPOINTS in user_input:
+            submenus = self._selected(user_input, CONF_MENUITEMS, self._offered_menuitems)
+            datapoints = self._selected(user_input, CONF_DATAPOINTS, self._offered_datapoints)
+            for submenu in submenus:
+                _LOGGER.debug(f'Appending {submenu} in MenuItems to discover')
+                self._alldevicemenuitems.append(submenu)
+            if datapoints:
                 # Get DP Data as we need this to determine type.
-                all_dpdata = await self._get_data(user_input[CONF_DATAPOINTS])
+                all_dpdata = await self._get_data(datapoints)
                 _LOGGER.debug(f'async_step_submenu **** Intial DP Data: {all_dpdata}')
-                all_dpdescr = await self._get_data_descr(user_input[CONF_DATAPOINTS], all_dpdata)
+                all_dpdescr = await self._get_data_descr(datapoints, all_dpdata)
                 _LOGGER.debug(f'async_step_submenu **** Initial DP Descriptions: {all_dpdescr}')
-                for dp in user_input[CONF_DATAPOINTS]:
+                for dp in datapoints:
                     dpjson=json.loads(dp)
                     dpdescr = all_dpdescr[dpjson["Id"]]["Description"]
                     _LOGGER.debug(f'async_step_submenu - "Id": {dpjson["Id"]},"WriteAccess": {dpjson["WriteAccess"]},"OpLine": {dpjson["Text"]["Id"]}, "Name": {dpjson["Text"]["Long"]},"MenuItem": {dpjson["MenuItem"]}, "DPDescr": {dpdescr} ')
@@ -253,6 +343,7 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_priorities()
         else:
             if len(self._alldevicemenuitems) > 0:
+                self._remember("submenu")
                 item = self._alldevicemenuitems.pop(0)
                 _LOGGER.debug(f"Generating Config Form for item: {item} ")
                 ### For each Function/MenuItem selected, list the entities available and allow the user to select what to monitor/poll
@@ -274,12 +365,19 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """
         self._errors = {}
         if user_input is not None:
+            if user_input.get(CONF_GO_BACK):
+                previous = await self._async_go_back()
+                if previous is not None:
+                    return previous
+                self._errors["base"] = "no_previous_step"
+                return await self.async_step_priorities()
             self._datapoints = apply_priorities(self._datapoints, user_input)
             self._data[CONF_DATAPOINTS] = self._datapoints
             return self._async_finish()
+        self._remember("priorities")
         return self.async_show_form(
             step_id="priorities",
-            data_schema=priority_schema(self._datapoints),
+            data_schema=priority_schema(self._datapoints, with_back=True),
             description_placeholders={"count": str(len(self._datapoints))},
             errors=self._errors,
         )
@@ -385,14 +483,15 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         menuitem_list_selector = []
         for menuitem in self._devicemenuitems:
             menuitem_list_selector.append(selector.SelectOptionDict(value=json.dumps(menuitem), label=menuitem["Text"]["Long"]))
+        self._offered_menuitems = [option["value"] for option in menuitem_list_selector]
+        self._remember("mainmenu")
         return self.async_show_form(
             step_id="mainmenu",
-            data_schema=vol.Schema(
-            {
-                vol.Required(CONF_MENUITEMS,default=False): selector.SelectSelector(selector.SelectSelectorConfig(options=menuitem_list_selector, multiple=True))
-            }
-            ),
+            data_schema=vol.Schema(back_and_select_all({
+                vol.Optional(CONF_MENUITEMS, default=[]): checkbox_list(menuitem_list_selector),
+            })),
             errors=self._errors,
+            last_step=False,
         )
 
     async def _show_submenu_selection_form(self, item, user_input):  # pylint: disable=unused-argument
@@ -430,42 +529,28 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if not already_exists:
                 dp["MenuItem"]=menutree_menulocation
                 datapoint_list_selector.append(selector.SelectOptionDict(value=json.dumps(dp), label=dp["Text"]["Long"]))
-        this_data_schema=vol.Schema({vol.Optional(CONF_DATAPOINTS): "",vol.Optional(CONF_DATAPOINTS): ""})
-        
-        if len(datapoint_list_selector) == 0 and len(menuitem_list_selector) == 0:
-            this_data_schema=vol.Schema(
-            {
-                vol.Optional(CONF_MENUITEMS): "",
-                vol.Optional(CONF_DATAPOINTS): "" 
-            }
-            )
-        elif len(datapoint_list_selector) == 0 and len(menuitem_list_selector) > 0:
-            this_data_schema=vol.Schema(
-            {
-                vol.Optional(CONF_MENUITEMS, default=[]): selector.SelectSelector(selector.SelectSelectorConfig(options=menuitem_list_selector, multiple=True)),
-                vol.Optional(CONF_DATAPOINTS): "" 
-            }
-            )
-        elif len(datapoint_list_selector) > 0 and len(menuitem_list_selector) == 0:
-            this_data_schema=vol.Schema(
-                {
-                vol.Optional(CONF_MENUITEMS): "",
-                vol.Required(CONF_DATAPOINTS, default=[]): selector.SelectSelector(selector.SelectSelectorConfig(options=datapoint_list_selector, multiple=True))
-                }
-            )
-        elif len(datapoint_list_selector) > 0 and len(menuitem_list_selector) > 0:
-            this_data_schema=vol.Schema(
-                {
-                vol.Optional(CONF_MENUITEMS, default=[]): selector.SelectSelector(selector.SelectSelectorConfig(options=menuitem_list_selector, multiple=True)),
-                vol.Required(CONF_DATAPOINTS, default=[]): selector.SelectSelector(selector.SelectSelectorConfig(options=datapoint_list_selector, multiple=True))
-                }
-            )
+        self._offered_menuitems = [option["value"] for option in menuitem_list_selector]
+        self._offered_datapoints = [option["value"] for option in datapoint_list_selector]
+
+        # One schema instead of four near-identical branches. A field is offered
+        # only when there is something to put in it; the previous version fell back
+        # to `vol.Optional(key): ""`, which renders an empty text box, and defined
+        # CONF_DATAPOINTS twice in the same dict.
+        schema: dict = {}
+        if menuitem_list_selector:
+            schema[vol.Optional(CONF_MENUITEMS, default=[])] = checkbox_list(menuitem_list_selector)
+        if datapoint_list_selector:
+            schema[vol.Optional(CONF_DATAPOINTS, default=[])] = checkbox_list(datapoint_list_selector)
+        this_data_schema = vol.Schema(
+            back_and_select_all(schema, offer_select_all=bool(schema))
+        )
         _LOGGER.debug(f'Data schema: {this_data_schema}')
         return self.async_show_form(
             step_id="submenu",
             data_schema=this_data_schema,
             description_placeholders={"item_name": menutree_menulocation},
             errors=self._errors,
+            last_step=False,
         )
 
 

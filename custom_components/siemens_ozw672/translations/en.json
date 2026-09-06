@@ -26,7 +26,9 @@
         "title": "Siemens OZW672 - Main Menu",
         "description": "Please chose the Menu Item(s) you wish to discover",
         "data": {
-          "menuitems": "Select one or more Menu Items"
+          "menuitems": "Select one or more Menu Items",
+          "go_back": "◀ Go back to the previous step (discards what is selected here)",
+          "select_all": "Select everything offered above"
         }
       },
       "submenu": {
@@ -34,7 +36,9 @@
         "description": "Select the Menu Items and/or Data Points to monitor",
         "data": {
           "menuitems": "Select one or more Submenu Items",
-          "datapoints": "Select one or more Data Points"
+          "datapoints": "Select one or more Data Points",
+          "go_back": "◀ Go back to the previous step (discards what is selected here)",
+          "select_all": "Select everything offered above"
         }
       },
       "priorities": {
@@ -42,7 +46,8 @@
         "description": "The OZW672 reads one datapoint per HTTP request, so polling everything at the same rate is what makes a large selection slow. Pick the {count} selected datapoints that need to be current.\n\nAnything you do not pick here is polled in the slowest tier.",
         "data": {
           "priority_fast": "Poll frequently (priority 1)",
-          "priority_medium": "Poll at a medium rate (priority 2)"
+          "priority_medium": "Poll at a medium rate (priority 2)",
+          "go_back": "◀ Go back to the previous step (discards what is selected here)"
         }
       }
     },
@@ -50,7 +55,8 @@
       "auth": "Username/Password is wrong.",
       "cannot_connect": "Failed to connect to the OZW672. Check the hostname/IP and that the device is reachable.",
       "device_selection_error": "Unexpected Error",
-      "timeout": "Timeout connecting to the device."
+      "timeout": "Timeout connecting to the device.",
+      "no_previous_step": "This is the first step of the setup, there is nothing to go back to."
     },
     "abort": {
       "single_instance_allowed": "Only a single instance is allowed.",

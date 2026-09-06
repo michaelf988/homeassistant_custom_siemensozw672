@@ -3,7 +3,7 @@
 NAME = "Siemens OZW672"
 DOMAIN = "siemens_ozw672"
 DOMAIN_DATA = f"{DOMAIN}_data"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 CONF_VERSION = 1
 CONF_MINOR_VERSION = 7
 
@@ -77,6 +77,12 @@ DEFAULT_PRIORITY = PRIORITY_MEDIUM
 # Form keys for the priority-assignment step.
 CONF_PRIORITY_FAST = "priority_fast"
 CONF_PRIORITY_MEDIUM = "priority_medium"
+
+# Controls the config flow renders itself, because Home Assistant provides neither.
+# There is no back button and no FlowResultType for one, so the flow keeps its own
+# history; and a checkbox list has no "select all", so that is a field too.
+CONF_GO_BACK = "go_back"
+CONF_SELECT_ALL = "select_all"
 
 # CONF_SCANINTERVAL keeps its name and its role as the *fastest* tier's interval,
 # so an existing entry's stored value keeps meaning what it always meant.
