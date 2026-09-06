@@ -100,6 +100,24 @@ def format_time(value: time, like: Any = None) -> str:
     return value.strftime("%H:%M")
 
 
+def readings_match(expected: Any, actual: Any) -> bool:
+    """Whether a reading corresponds to a value that was just written.
+
+    The device pads, rounds and reformats what it echoes back, so this compares
+    by meaning rather than by text: as numbers if both parse as numbers, as times
+    if both parse as times, otherwise literally.
+    """
+    expected_number, actual_number = parse_numeric(expected), parse_numeric(actual)
+    if expected_number is not None and actual_number is not None:
+        # The device rounds to the datapoint's resolution, so exact equality is
+        # the wrong test for a float.
+        return abs(expected_number - actual_number) < 0.01
+    expected_time, actual_time = parse_time(expected), parse_time(actual)
+    if expected_time is not None and actual_time is not None:
+        return expected_time == actual_time
+    return clean_value(expected) == clean_value(actual)
+
+
 def datapoint_type(config_entry: dict, data: dict | None = None) -> str:
     """The datapoint's value type, from the stored description if possible."""
     descr = config_entry.get("DPDescr") or {}

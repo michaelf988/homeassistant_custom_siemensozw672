@@ -414,6 +414,25 @@ class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
             hass, _LOGGER, name=f"{DOMAIN} ({priority})", update_interval=scaninterval
         )
 
+    async def async_refresh_datapoint(self, datapoint) -> dict | None:
+        """Re-read one datapoint and publish it, without polling the whole tier.
+
+        async_request_refresh() re-reads every datapoint this coordinator owns and
+        only publishes once all of them are in. A datapoint in a large slow tier
+        therefore took minutes to reflect a value that had just been written to
+        it - which is exactly when you want to see whether the write took.
+        """
+        try:
+            fresh = await self.api.async_get_data([datapoint])
+        except SiemensOzw672ApiError as exception:
+            _LOGGER.debug("Could not re-read %s: %s", datapoint.get("Id"), exception)
+            await self.async_request_refresh()
+            return None
+        if not fresh:
+            return None
+        self.async_set_updated_data({**(self.data or {}), **fresh})
+        return fresh.get(datapoint["Id"])
+
     async def _async_update_data(self):
         """Update all data via the OZW672 Web API."""
         try:

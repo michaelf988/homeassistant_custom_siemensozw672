@@ -6,9 +6,6 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfTemperature,
 )
-from homeassistant.exceptions import HomeAssistantError
-
-from .api import SiemensOzw672ApiError
 from .const import DOMAIN
 from .const import ICON_NUMERIC
 from .const import ICON_PERCENT
@@ -121,13 +118,7 @@ class SiemensOzw672NumberControlBase(SiemensOzw672Entity, NumberEntity):
             f'{type(self).__name__} - Will update ID/Opline/Name: {item}/{opline}/{name} '
             f'to Value: {new_value} from Value: {existing_value}'
         )
-        try:
-            await self.coordinator.api.async_write_data(self.config_entry, str(new_value))
-        except SiemensOzw672ApiError as exception:
-            raise HomeAssistantError(
-                f"Could not write {name} on the OZW672: {exception}"
-            ) from exception
-        await self.coordinator.async_request_refresh()
+        await self.async_write_value(str(new_value), expected=new_value)
 
 
 class SiemensOzw672TempControl(SiemensOzw672NumberControlBase):
