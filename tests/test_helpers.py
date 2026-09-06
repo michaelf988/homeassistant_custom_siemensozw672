@@ -20,8 +20,12 @@ from custom_components.siemens_ozw672.const import (
     MAX_SCANINTERVAL,
     MIN_SCANINTERVAL,
 )
+from datetime import time
+
 from custom_components.siemens_ozw672.helpers import (
     build_dp_configs,
+    format_time,
+    parse_time,
     clean_value,
     datapoint_identifier,
     decimal_digits,
@@ -182,3 +186,42 @@ async def test_option_int_clamps_unusable_values(hass, stored, expected):
     assert option_int(
         entry, CONF_SCANINTERVAL, DEFAULT_SCANINTERVAL, MIN_SCANINTERVAL, MAX_SCANINTERVAL
     ) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("06:30", time(6, 30)),
+        ("  06:30 ", time(6, 30)),
+        ("6:30", time(6, 30)),
+        ("06:30:00", time(6, 30)),
+        ("23:59:59", time(23, 59, 59)),
+        ("00:00", time(0, 0)),
+        # The device's no-data sentinel and anything unreadable.
+        ("----", None),
+        ("", None),
+        (None, None),
+        ("not a time", None),
+        ("25:00", None),
+    ],
+)
+def test_parse_time(raw, expected):
+    """The TimeOfDay wire format is undocumented, so both shapes are accepted."""
+    assert parse_time(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "like", "expected"),
+    [
+        # Writing seconds to a datapoint that reports none is what this hardware
+        # rejects silently, so the reading is the template.
+        (time(6, 30), "07:00", "06:30"),
+        (time(6, 30), "07:00:00", "06:30:00"),
+        (time(6, 30, 15), "07:00", "06:30"),
+        (time(6, 30), None, "06:30"),
+        (time(6, 30), "----", "06:30"),
+    ],
+)
+def test_format_time_matches_the_reported_shape(value, like, expected):
+    """A write is rendered the way the device renders its own reading."""
+    assert format_time(value, like) == expected

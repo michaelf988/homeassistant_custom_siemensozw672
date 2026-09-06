@@ -20,7 +20,7 @@ monitoring an RVS43.345/109 with three AVS73.390/109 extension modules.
 You can also **write** values back to the OZW672, with three caveats:
 
 1. The OZW672 marks only certain datapoints as writeable.
-2. Writing is supported for enumerations, numbers and switches.
+2. Writing is supported for enumerations, numbers, switches and times of day.
 3. Some writes are silently ignored by the device. If that happens, check the same
    datapoint in the OZW672's own web UI.
 
@@ -33,6 +33,7 @@ You can also **write** values back to the OZW672, with three caveats:
 | `switch` | Read/write `On` / `Off` |
 | `select` | Read/write enumerations |
 | `number` | Read/write numbers, e.g. a temperature or percentage |
+| `time` | Read/write times of day, e.g. a programme switching time |
 
 ![example](example.png)
 
@@ -93,7 +94,7 @@ domains*:
 | Pause between requests | 0 s | Deliberate gap between consecutive requests |
 | Verify the HTTPS certificate | off | The device ships a self-signed certificate; turn this on only if you installed a trusted one |
 | Use the device Addr+Type as the name | off | |
-| Switch / select / number / binary sensor / sensor | on | Turn an entity domain off entirely |
+| Switch / select / number / time / binary sensor / sensor | on | Turn an entity domain off entirely |
 
 ## Recommendations for reliable operation
 

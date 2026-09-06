@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+### Added
+
+- **Writeable times of day are entities again.** `TimeOfDay` datapoints — the switching
+  times of the controller's programmes — were classified as a `time` entity that no
+  platform claimed, so between 0.4.0 and 0.5.0 they were discovered and then silently
+  dropped: no entity, no warning. There is a `time` platform now, with its own domain
+  toggle in the options.
+
+  The wire format of these datapoints is undocumented and varies by firmware, so both
+  `HH:MM` and `HH:MM:SS` are accepted, and a write is rendered in whichever shape the
+  device used for its own reading. A reading that cannot be parsed shows as *unknown*
+  rather than as a plausible but wrong time, and says so in the log.
+
+  **Breaking for existing entries:** a writeable `TimeOfDay` datapoint that has been
+  running as a sensor is migrated to a `time` entity. The old sensor entity is left
+  behind in the registry as unavailable and can be deleted; an automation referencing it
+  has to be pointed at the new entity. Read-only `TimeOfDay` datapoints stay sensors.
 
 ### Documentation
 

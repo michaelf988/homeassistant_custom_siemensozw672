@@ -7,6 +7,7 @@ priority) has to be made once instead of five times.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -63,6 +64,40 @@ def clean_value(raw: Any) -> str | None:
     if not text or set(text) == {"-"}:
         return None
     return text
+
+
+def parse_time(raw: Any) -> time | None:
+    """Parse a time-of-day reading, or None if it carries no usable value.
+
+    The exact wire format of a TimeOfDay datapoint is not documented and varies by
+    firmware, so both "HH:MM" and "HH:MM:SS" are accepted, with or without the
+    padding the device applies to other values. Anything else yields None, which
+    shows as unknown rather than as a wrong time.
+    """
+    text = clean_value(raw)
+    if text is None:
+        return None
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    _LOGGER.warning(
+        "Could not read %r as a time of day; expected HH:MM or HH:MM:SS", text
+    )
+    return None
+
+
+def format_time(value: time, like: Any = None) -> str:
+    """Render a time for writing back, matching the shape the device reported.
+
+    Writing "06:30:00" to a datapoint the device reports as "06:30" is the kind of
+    thing this hardware rejects silently, so the reading is used as the template.
+    """
+    reference = clean_value(like) or ""
+    if reference.count(":") >= 2:
+        return value.strftime("%H:%M:%S")
+    return value.strftime("%H:%M")
 
 
 def decimal_digits(config_entry: dict) -> int | None:
