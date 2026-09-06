@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0
+
+### Changed
+
+- **The selection screens are checkbox lists, not dropdowns.** Every item is visible at
+  once instead of hidden behind a search field, which is the point of a screen whose job
+  is "look at what is on offer and tick some of it". Applies to the main menu, the
+  datapoint and submenu pickers, and the priority assignment.
+- **"Select everything offered above"** on the menu and datapoint screens. Home Assistant
+  has no select-all for a checkbox list, so the flow interprets one itself; deselecting
+  all is just unticking, which a checkbox list makes easy and a dropdown did not.
+- **You can go back.** Home Assistant config flows have no back navigation — no button,
+  and no result type for one — so the flow keeps its own history: it snapshots its state
+  before each form, and *"◀ Go back to the previous step"* restores the previous one.
+  Back works from the priority screen and anywhere in the menu walk, repeatedly, and
+  correctly discards what the step being left had collected, so revisiting a screen does
+  not add its datapoints twice. At the first step it says so rather than aborting the
+  setup.
+
+  Previously the only way to revisit a decision was to abort and start over.
+
+### Fixed
+
+- The submenu form built its schema in four near-identical branches, one of which
+  defined `datapoints` twice in the same dict and another of which fell back to
+  `vol.Optional(key): ""` — an empty text box where a picker was meant to be. It is one
+  schema now, and a field appears only when there is something to put in it.
+
 ## 0.6.0
 
 ### Added

@@ -6,10 +6,16 @@ on a controller this small.
 """
 from unittest.mock import patch
 
+import pytest
+
 from homeassistant.data_entry_flow import FlowResultType
+
+from homeassistant.helpers import selector
 
 from custom_components.siemens_ozw672.const import (
     CONF_DATAPOINTS,
+    CONF_GO_BACK,
+    CONF_SELECT_ALL,
     CONF_DEVICE,
     CONF_HOST,
     CONF_MENUITEMS,
@@ -28,12 +34,21 @@ from custom_components.siemens_ozw672.const import (
 )
 
 
-def _options(result, key):
-    """The SelectSelector choices offered for one field of the shown form."""
+def _selector(result, key):
+    """The selector for one field of the shown form."""
     for schema_key in result["data_schema"].schema:
         if str(schema_key) == key:
-            return result["data_schema"].schema[schema_key].config["options"]
+            return result["data_schema"].schema[schema_key]
     raise AssertionError(f"{key} is not on this form: {list(result['data_schema'].schema)}")
+
+
+def _options(result, key):
+    """The SelectSelector choices offered for one field of the shown form."""
+    return _selector(result, key).config["options"]
+
+
+def _fields(result):
+    return {str(key) for key in result["data_schema"].schema}
 
 
 def _value_with(result, key, needle):
@@ -44,7 +59,7 @@ def _value_with(result, key, needle):
     raise AssertionError(f"no {key} option labelled like {needle!r}")
 
 
-async def _walk_to_priorities(hass):
+async def _walk_to_priorities(hass, datapoints=None):
     """Drive the flow up to, but not through, the priority step."""
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert result["step_id"] == "user"
@@ -72,10 +87,14 @@ async def _walk_to_priorities(hass):
     assert result["step_id"] == "submenu"
 
     # The DHW menu holds three datapoints and no submenus.
-    datapoints = [option["value"] for option in _options(result, CONF_DATAPOINTS)]
-    assert len(datapoints) == 3
+    offered = [option["value"] for option in _options(result, CONF_DATAPOINTS)]
+    assert len(offered) == 3
+    if datapoints == "all":
+        return await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_SELECT_ALL: True}
+        )
     return await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_DATAPOINTS: datapoints}
+        result["flow_id"], {CONF_DATAPOINTS: offered}
     )
 
 
@@ -165,3 +184,161 @@ async def test_datapoints_carry_a_priority_even_if_the_step_is_skipped(hass):
 
     assert all(CONF_PRIORITY in dp for dp in result["data"][CONF_DATAPOINTS])
     assert all(dp[CONF_PRIORITY] != PRIORITY_MEDIUM for dp in result["data"][CONF_DATAPOINTS])
+
+
+# --- checkbox lists -------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("step", "field"),
+    [("mainmenu", CONF_MENUITEMS), ("submenu", CONF_DATAPOINTS)],
+)
+async def test_selection_forms_render_as_checkbox_lists(hass, step, field):
+    """A dropdown hides every option behind a search field.
+
+    SelectSelectorMode.LIST is what makes the frontend draw checkboxes instead.
+    """
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_PROTOCOL: "http", CONF_HOST: "test",
+         CONF_USERNAME: "user", CONF_PASSWORD: "pass"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEVICE: _value_with(result, CONF_DEVICE, "RVS43"),
+         "use_device_longname": False, "prefix_with_function": False,
+         "prefix_with_opline": False},
+    )
+    if step == "submenu":
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_MENUITEMS: [_value_with(result, CONF_MENUITEMS, "DHW")]},
+        )
+
+    assert result["step_id"] == step
+    config = _selector(result, field).config
+    # The config normalises the enum to its string value.
+    assert config["mode"] == selector.SelectSelectorMode.LIST
+    assert config["multiple"] is True
+
+
+async def test_the_priority_form_is_a_checkbox_list_too(hass):
+    """Sorting datapoints into tiers is the same kind of picking."""
+    result = await _walk_to_priorities(hass)
+
+    assert _selector(result, CONF_PRIORITY_FAST).config["mode"] == selector.SelectSelectorMode.LIST
+
+
+# --- select all -----------------------------------------------------------
+
+async def test_select_all_takes_everything_offered(hass):
+    """Home Assistant has no select-all, so the flow interprets one itself."""
+    result = await _walk_to_priorities(hass, datapoints="all")
+
+    # All three DHW datapoints were taken without listing them.
+    assert result["description_placeholders"] == {"count": "3"}
+
+
+async def test_select_all_wins_over_an_empty_selection(hass):
+    """Ticking select-all and picking nothing still selects everything."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_PROTOCOL: "http", CONF_HOST: "test",
+         CONF_USERNAME: "user", CONF_PASSWORD: "pass"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEVICE: _value_with(result, CONF_DEVICE, "RVS43"),
+         "use_device_longname": False, "prefix_with_function": False,
+         "prefix_with_opline": False},
+    )
+    offered = len(_options(result, CONF_MENUITEMS))
+    assert offered > 1
+
+    # Every main menu item, without naming one of them.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_MENUITEMS: [], CONF_SELECT_ALL: True}
+    )
+
+    assert result["step_id"] == "submenu"
+
+
+# --- going back -----------------------------------------------------------
+
+async def test_going_back_from_priorities_returns_to_the_datapoint_form(hass):
+    """The only way to revisit a step used to be aborting and starting over."""
+    result = await _walk_to_priorities(hass)
+    assert result["step_id"] == "priorities"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_GO_BACK: True}
+    )
+
+    assert result["step_id"] == "submenu"
+    # The same form, with the same three datapoints still on offer.
+    assert len(_options(result, CONF_DATAPOINTS)) == 3
+
+
+async def test_going_back_discards_what_that_step_collected(hass):
+    """Otherwise a revisit would append the datapoints a second time."""
+    result = await _walk_to_priorities(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_GO_BACK: True}
+    )
+
+    # Re-select a single datapoint this time.
+    one = _options(result, CONF_DATAPOINTS)[0]["value"]
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_DATAPOINTS: [one]}
+    )
+
+    assert result["step_id"] == "priorities"
+    assert result["description_placeholders"] == {"count": "1"}
+
+
+async def test_going_back_twice_reaches_the_main_menu(hass):
+    """Back is a stack, not a single step."""
+    result = await _walk_to_priorities(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_GO_BACK: True}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_GO_BACK: True}
+    )
+
+    assert result["step_id"] == "mainmenu"
+
+
+async def test_back_at_the_first_step_says_so(hass):
+    """Rather than aborting the flow or silently doing nothing."""
+    result = await _walk_to_priorities(hass)
+    for _ in range(2):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_GO_BACK: True}
+        )
+    assert result["step_id"] == "mainmenu"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_GO_BACK: True}
+    )
+
+    assert result["step_id"] == "mainmenu"
+    assert result["errors"] == {"base": "no_previous_step"}
+
+
+async def test_the_flow_still_completes_after_going_back(hass):
+    """Back must leave the flow in a state that can still finish."""
+    result = await _walk_to_priorities(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_GO_BACK: True}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SELECT_ALL: True}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PRIORITY_FAST: [], CONF_PRIORITY_MEDIUM: []}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert len(result["data"][CONF_DATAPOINTS]) == 3

@@ -104,7 +104,10 @@ domains*:
 2. **Give the OZW672 a static IP, gateway and DNS**: *Home → 0.x OZW672.01 → Settings →
    Communication → Ethernet*.
 3. **Discover a few datapoints at a time.** Pick one function and at most ten datapoints
-   per run, then re-run discovery to add more.
+   per run, then re-run discovery to add more. The selection screens are checkbox lists
+   with a *select everything* option, and *◀ Go back to the previous step* returns to the
+   previous screen if you want to change something — repeatedly, all the way back to the
+   main menu.
 4. **Use a dedicated user** on the OZW672 for Home Assistant polling — the *Service* user
    group works well.
 
