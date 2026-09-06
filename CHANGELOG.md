@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.10.0
+
+### Changed
+
+- **A changed setting is read back immediately, from that datapoint alone.** Writing a
+  value used to trigger a refresh of the whole polling tier: every datapoint in it was
+  re-read, and nothing was published until all of them were in. In a slow tier with a
+  hundred datapoints that meant minutes of staring at the old value before Home Assistant
+  showed whether the change had taken — on top of the coordinator's ten-second debounce.
+
+  The write now re-reads exactly the datapoint that was written (one request) and
+  publishes it straight away, leaving the tier's own schedule alone. Verifying a setting
+  no longer costs a full poll of everything around it.
+
+  This applies to all four writeable platforms: `switch`, `select`, `number` and `time`.
+
+### Added
+
+- **A write the device silently ignored is now reported.** The OZW672 accepts some writes
+  and then keeps its old value. The read-back is compared against what was written — as
+  numbers, as times, or literally, depending on the datapoint — and a mismatch is logged
+  as a warning naming the datapoint and both values, instead of leaving it to be noticed
+  weeks later.
+
 ## 0.9.0
 
 ### Added

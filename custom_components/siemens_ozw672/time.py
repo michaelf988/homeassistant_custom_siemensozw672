@@ -9,9 +9,6 @@ import logging
 from datetime import time as dt_time
 
 from homeassistant.components.time import TimeEntity
-from homeassistant.exceptions import HomeAssistantError
-
-from .api import SiemensOzw672ApiError
 from .const import DOMAIN
 from .const import ICON_TIME
 from .const import TIME
@@ -68,10 +65,4 @@ class SiemensOzw672TimeControl(SiemensOzw672Entity, TimeEntity):
             f'SiemensOzw672TimeControl - Will update ID/Opline/Name: {item}/{opline}/{name} '
             f'to Value: {new_value} from Value: {existing}'
         )
-        try:
-            await self.coordinator.api.async_write_data(self.config_entry, new_value)
-        except SiemensOzw672ApiError as exception:
-            raise HomeAssistantError(
-                f"Could not write {name} on the OZW672: {exception}"
-            ) from exception
-        await self.coordinator.async_request_refresh()
+        await self.async_write_value(new_value, expected=new_value)

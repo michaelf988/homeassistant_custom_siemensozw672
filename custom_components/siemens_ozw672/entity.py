@@ -1,13 +1,15 @@
 """SiemensOzw672Entity class"""
 import logging
 
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .api import SiemensOzw672ApiError
 from .const import ATTRIBUTION
 from .const import DOMAIN
 from .const import MANUFACTURER
 from .const import VERSION
-from .helpers import clean_value
+from .helpers import clean_value, readings_match
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -65,6 +67,38 @@ class SiemensOzw672Entity(CoordinatorEntity):
     def _raw_unit(self):
         """The reported unit with padding stripped."""
         return str(self._dp_data.get("Unit", "")).strip()
+
+    async def async_write_value(self, value: str, expected=None) -> None:
+        """Write to the device, then re-read this one datapoint straight away.
+
+        Refreshing the coordinator instead re-reads every datapoint of the tier
+        and publishes nothing until all of them are in, so a setting in a large
+        slow tier took minutes to show whether it had taken. This reads back the
+        single datapoint that was written, which is one request.
+
+        `expected` is what the datapoint should read afterwards. The OZW672
+        accepts some writes and then ignores them, so a mismatch is worth saying
+        out loud rather than leaving the user to spot it.
+        """
+        name = self.config_entry["Name"]
+        try:
+            await self.coordinator.api.async_write_data(self.config_entry, value)
+        except SiemensOzw672ApiError as exception:
+            raise HomeAssistantError(
+                f"Could not write {name} on the OZW672: {exception}"
+            ) from exception
+
+        reading = await self.coordinator.async_refresh_datapoint(self.config_entry)
+        if expected is None or reading is None:
+            return
+        actual = clean_value(reading.get("Data", {}).get("Value"))
+        if not readings_match(expected, actual):
+            _LOGGER.warning(
+                "The OZW672 accepted the write to %s but still reports %r instead of "
+                "%r. This device ignores some writes; check the datapoint in its own "
+                "web interface.",
+                name, actual, expected,
+            )
 
     @property
     def extra_state_attributes(self):

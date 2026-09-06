@@ -3,8 +3,6 @@ import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.exceptions import HomeAssistantError
-
-from .api import SiemensOzw672ApiError
 from .const import DOMAIN
 from .const import ICON_SELECT
 from .const import SELECT
@@ -90,10 +88,5 @@ class SiemensOzw672SelectControl(SiemensOzw672Entity, SelectEntity):
         _LOGGER.info(
             f'SiemensOzw672SelectControl - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {enum_value}'
         )
-        try:
-            await self.coordinator.api.async_write_data(self.config_entry, enum_value)
-        except SiemensOzw672ApiError as exception:
-            raise HomeAssistantError(
-                f"Could not write {name} on the OZW672: {exception}"
-            ) from exception
-        await self.coordinator.async_request_refresh()
+        # The device echoes the option text, not the value that was written.
+        await self.async_write_value(enum_value, expected=option)

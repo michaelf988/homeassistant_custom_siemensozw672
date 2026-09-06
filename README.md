@@ -24,6 +24,11 @@ You can also **write** values back to the OZW672, with three caveats:
 3. Some writes are silently ignored by the device. If that happens, check the same
    datapoint in the OZW672's own web UI.
 
+Writing a value re-reads **that one datapoint** immediately, so a changed setting shows
+the device's own answer within a second or so — it does not wait for the next poll of its
+tier. If the device reports something other than what was written, that mismatch is logged
+as a warning, which is what a silently ignored write looks like.
+
 ### Entity types
 
 | Platform | Description |

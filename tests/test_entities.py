@@ -494,3 +494,129 @@ async def test_a_datapoint_without_a_stored_unit_is_reported(hass, caplog):
     assert "Re-run the integration's setup" in caplog.text
     # It still becomes an entity, just a generic numeric one.
     assert _state(hass, "sensor", OUTSIDE_TEMP) is not None
+
+
+# --- writing a value and seeing it take -----------------------------------
+
+async def test_a_write_rereads_only_that_datapoint(hass):
+    """Refreshing the coordinator re-reads the whole tier and publishes nothing
+    until all of it is in, so a setting in a large slow tier took minutes to show
+    whether it had taken. One write, one read-back."""
+    from unittest.mock import AsyncMock, patch
+
+    await _setup(hass)
+    entity_id = _entity_id(hass, "switch", DHW_MODE)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ), patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, return_value={},
+    ) as read:
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    # Exactly the datapoint that was written, not its whole tier.
+    assert read.await_count == 1
+    assert [dp["Id"] for dp in read.await_args.args[0]] == ["1438"]
+
+
+async def test_the_new_reading_reaches_the_entity_immediately(hass):
+    """The point of the read-back: the state is the device's, not an assumption."""
+    from unittest.mock import AsyncMock, patch
+
+    await _setup(hass)
+    entity_id = _entity_id(hass, "switch", DHW_MODE)
+    assert hass.states.get(entity_id).state == "on"
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ), patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock,
+        return_value={"1438": {"Data": {"Type": "Enumeration", "Value": "Off", "Unit": ""}}},
+    ):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state == "off"
+
+
+async def test_a_write_the_device_ignored_is_reported(hass, caplog):
+    """The OZW672 accepts some writes and then ignores them. Say so."""
+    from unittest.mock import AsyncMock, patch
+
+    await _setup(hass)
+    entity_id = _entity_id(hass, "switch", DHW_MODE)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ), patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock,
+        # The device still reports the old value.
+        return_value={"1438": {"Data": {"Type": "Enumeration", "Value": "On", "Unit": ""}}},
+    ):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    assert "still reports" in caplog.text
+    assert "check the datapoint in its own web interface" in caplog.text
+
+
+async def test_the_other_tiers_are_left_alone_by_a_write(hass):
+    """A write must not drag every other tier into a poll as a side effect."""
+    from unittest.mock import AsyncMock, patch
+
+    entry = await _setup(hass)
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    before = {p: c.data for p, c in runtime.coordinators.items()}
+    entity_id = _entity_id(hass, "switch", DHW_MODE)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ), patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock,
+        return_value={"1438": {"Data": {"Type": "Enumeration", "Value": "Off", "Unit": ""}}},
+    ):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    for priority, coordinator in runtime.coordinators.items():
+        if priority != PRIORITY_MEDIUM:  # the switch's own tier
+            assert coordinator.data == before[priority]
+
+
+async def test_a_failed_readback_does_not_fail_the_write(hass):
+    """The write already happened; a read-back that fails falls back to a refresh."""
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.siemens_ozw672.api import SiemensOzw672ApiError
+
+    await _setup(hass)
+    entity_id = _entity_id(hass, "switch", DHW_MODE)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ), patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, side_effect=SiemensOzw672ApiError("gone"),
+    ):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+        )
+        await hass.async_block_till_done()
