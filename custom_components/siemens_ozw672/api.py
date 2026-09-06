@@ -255,12 +255,23 @@ class SiemensOzw672ApiClient:
                 if writeable == "true" or force:  #We only need descriptions for Writeable datapoints.
                     response = await self.api_wrapper("get", url)
                 else:  #Just return the Type - save the OZW a load of queries.
+                    # The unit comes along: it is what decides which entity class a
+                    # numeric datapoint gets, and reading it from a live poll instead
+                    # meant setup could not classify anything until a full poll had
+                    # finished.
                     response = {
-                        "Description": {"Type": dpdata["Data"]["Type"]},
+                        "Description": {
+                            "Type": dpdata["Data"]["Type"],
+                            "Unit": dpdata["Data"].get("Unit", ""),
+                        },
                         "Result": {"Success": "true"},
                     }
             if response.get("Result", {}).get("Success") == "true":
                 _LOGGER.debug(f"DatapointItem description reponse: {response}")
+                # A fetched description carries a Unit only for the types that have
+                # one; fill it in from the reading so every stored description can be
+                # classified without the device.
+                response["Description"].setdefault("Unit", dpdata["Data"].get("Unit", ""))
                 ### This is the main place where the sensors are categorised into domains
                 ### Data Point Descriptions are only polled at the time of discovery
                 ###

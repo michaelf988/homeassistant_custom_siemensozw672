@@ -100,6 +100,38 @@ def format_time(value: time, like: Any = None) -> str:
     return value.strftime("%H:%M")
 
 
+def datapoint_type(config_entry: dict, data: dict | None = None) -> str:
+    """The datapoint's value type, from the stored description if possible."""
+    descr = config_entry.get("DPDescr") or {}
+    return str(descr.get("Type") or (data or {}).get("Type") or "")
+
+
+def datapoint_unit(config_entry: dict, data: dict | None = None) -> str:
+    """The datapoint's unit, from the stored description if possible.
+
+    The platforms used to read this out of the coordinator's data, which forced
+    setup to wait for a complete first poll before it could decide which entity
+    class each datapoint gets. Discovery already knows the unit, so it is stored
+    in the description; the live reading is only a fallback for entries written
+    before that.
+    """
+    descr = config_entry.get("DPDescr") or {}
+    unit = descr.get("Unit")
+    if unit is None:
+        unit = (data or {}).get("Unit")
+    return str(unit or "").strip()
+
+
+def has_stored_unit(config_entry: dict) -> bool:
+    """Whether discovery recorded a unit for this datapoint.
+
+    Distinguishes "the description says there is no unit" (an enumeration) from
+    "the description predates units being stored at all", which is the case for
+    entries written before 0.8.0.
+    """
+    return "Unit" in (config_entry.get("DPDescr") or {})
+
+
 def decimal_digits(config_entry: dict) -> int | None:
     """Display precision from the datapoint description, or None if absent.
 

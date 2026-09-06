@@ -56,7 +56,6 @@ from .const import MAX_HTTPRETRIES
 import copy
 import json
 
-from .helpers import datapoint_priority
 
 PROTOCOL_OPTIONS = [
     selector.SelectOptionDict(value="http", label="HTTP"),
@@ -108,8 +107,14 @@ def priority_schema(datapoints, with_back: bool = False):
         )
         for datapoint in datapoints
     ]
+    # Only datapoints that already carry an explicit priority are pre-ticked. On a
+    # fresh setup none do, and defaulting them through datapoint_priority() would
+    # pre-tick every one of them as "medium" - the opposite of the documented rule
+    # that anything not picked stays in the slowest tier.
     current = {
-        priority: [dp["Id"] for dp in datapoints if datapoint_priority(dp) == priority]
+        priority: [
+            dp["Id"] for dp in datapoints if dp.get(CONF_PRIORITY) == priority
+        ]
         for priority in (PRIORITY_FAST, PRIORITY_MEDIUM)
     }
     schema = {

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.0
+
+### Fixed
+
+- **Setup failed outright on a large selection.** Setup performed one HTTP request per
+  datapoint, serialised, before it returned. With a couple of hundred datapoints that
+  runs past Home Assistant's 300-second setup budget, at which point setup is cancelled
+  with a bare `CancelledError` — and because a config flow *awaits* the setup it
+  triggers, the setup wizard reported a bare **"Unknown error occurred"** and the
+  integration never loaded. Both symptoms, one cause.
+
+  Setup now makes exactly one request, to prove the device is reachable, and each
+  polling tier fills in on its own afterwards. Entities exist immediately and are
+  *unavailable* until their tier's first poll lands. An unreachable device or refused
+  credentials put the entry into retry rather than failing it.
+- **Entity classes are decided from the stored datapoint description**, not from a live
+  reading. Reading the unit out of the coordinator is what forced setup to wait for a
+  complete poll. Discovery now records the unit for every datapoint, including the
+  read-only ones whose synthesised description previously omitted it.
+- **The priority screen pre-ticked everything as "medium"** on a fresh setup, which is
+  the opposite of the documented rule that anything not picked stays in the slowest
+  tier. Only datapoints that already carry an explicit priority are pre-ticked now.
+
+### Note for existing entries
+
+A numeric datapoint discovered before 0.8.0 carries no recorded unit, so it becomes a
+plain number sensor rather than a temperature, energy or power one. Setup logs a warning
+naming those datapoints; re-running the integration's setup re-discovers them with their
+units.
+
 ## 0.7.0
 
 ### Changed

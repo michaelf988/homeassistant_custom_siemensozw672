@@ -17,6 +17,7 @@ from .const import ICON_THERMOMETER
 from .const import NUMBER
 from .entity import SiemensOzw672Entity
 from .helpers import (
+    datapoint_unit,
     decimal_digits,
     descr_float,
     dp_configs_for_hatype,
@@ -50,8 +51,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entities = []
     for dp_config in dp_configs_for_hatype(entry, "number"):
         coordinator = runtime.coordinator_for(dp_config["priority"])
+        # The stored description decides the class; at setup no poll has run yet.
         data = (coordinator.data or {}).get(dp_config["Id"], {}).get("Data", {})
-        unit = str(data.get("Unit", "")).strip()
+        unit = datapoint_unit(dp_config, data)
         _LOGGER.debug(f"NUMBER Adding Entity with config: {dp_config}")
         if unit in TEMPERATURE_UNITS:
             entities.append(SiemensOzw672TempControl(coordinator, dp_config))
@@ -136,7 +138,10 @@ class SiemensOzw672TempControl(SiemensOzw672NumberControlBase):
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        return TEMPERATURE_UNITS.get(self._raw_unit, UnitOfTemperature.CELSIUS)
+        return TEMPERATURE_UNITS.get(
+            self._raw_unit or datapoint_unit(self.config_entry),
+            UnitOfTemperature.CELSIUS,
+        )
 
 
 class SiemensOzw672PercentControl(SiemensOzw672NumberControlBase):
@@ -167,7 +172,7 @@ class SiemensOzw672EnergyControl(SiemensOzw672NumberControlBase):
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        return self._raw_unit or None
+        return self._raw_unit or datapoint_unit(self.config_entry) or None
 
 
 class SiemensOzw672NumberControl(SiemensOzw672NumberControlBase):
@@ -177,4 +182,4 @@ class SiemensOzw672NumberControl(SiemensOzw672NumberControlBase):
     @property
     def native_unit_of_measurement(self):
         """Return whatever unit the device reports, if any."""
-        return self._raw_unit or None
+        return self._raw_unit or datapoint_unit(self.config_entry) or None

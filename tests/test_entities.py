@@ -49,14 +49,14 @@ def _dp(id, opline, name, dptype, hatype, priority=PRIORITY_MEDIUM, **descr):
 ENTRY_ID = "entity_entry"
 
 DATAPOINTS = [
-    _dp("1960", "39", "Outside temp", "Numeric", "sensor", priority=PRIORITY_FAST, DecimalDigits="1"),
+    _dp("1960", "39", "Outside temp", "Numeric", "sensor", priority=PRIORITY_FAST, Unit="\u00b0C", DecimalDigits="1"),
     # The device reports "----" for this one: no reading at all.
-    _dp("1963", "44", "Flow temp", "Numeric", "sensor", DecimalDigits="1"),
-    _dp("1961", "40", "Energy total", "Numeric", "sensor", priority=PRIORITY_SLOW, DecimalDigits="0"),
+    _dp("1963", "44", "Flow temp", "Numeric", "sensor", Unit="\u00b0C", DecimalDigits="1"),
+    _dp("1961", "40", "Energy total", "Numeric", "sensor", priority=PRIORITY_SLOW, Unit="kWh", DecimalDigits="0"),
     # Writeable energy - the only shape that reaches SiemensOzw672EnergyControl.
-    _dp("1962", "41", "Energy setpoint", "Numeric", "number",
+    _dp("1962", "41", "Energy setpoint", "Numeric", "number", Unit="kWh",
         Min="0.000000", Max="100000.000000", Resolution="1.000000", DecimalDigits="1"),
-    _dp("1439", "3516", "DHW setpoint", "Numeric", "number",
+    _dp("1439", "3516", "DHW setpoint", "Numeric", "number", Unit="\u00b0C",
         Min="45.000000", Max="60.000000", Resolution="1.000000", DecimalDigits="0"),
     _dp("1438", "3514", "DHW operating mode", "Enumeration", "switch"),
     _dp("1441", "3522", "DHW release", "Enumeration", "select",
@@ -373,3 +373,124 @@ async def test_the_time_domain_can_be_switched_off(hass):
     await _setup(hass, options={"time": False})
 
     assert _entity_id(hass, "time", STANDBY_START) is None
+
+
+# --- setup must not block on polling ---------------------------------------
+
+async def test_setup_completes_even_if_polling_never_finishes(hass):
+    """Setup made one HTTP request per datapoint, serialised, before returning.
+
+    With a couple of hundred datapoints that runs past Home Assistant's
+    300-second setup budget (SLOW_SETUP_MAX_WAIT); setup is then cancelled with a
+    bare CancelledError, and because a config flow awaits the setup it triggers,
+    the wizard reports "Unknown error occurred" and the integration never loads.
+
+    The property that prevents it: setup finishes regardless of how long the poll
+    takes. Here it never finishes at all.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    never = asyncio.Event()
+
+    async def _hang(_datapoints):
+        await never.wait()
+        return {}
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        side_effect=_hang,
+    ), patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
+        new_callable=AsyncMock, return_value=True,
+    ) as login:
+        entry = _entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+
+        # Reachability is all setup waits for: one request, not one per datapoint.
+        assert login.await_count == 1
+        # Entities exist already, waiting for their first reading.
+        assert _state(hass, "sensor", OUTSIDE_TEMP).state == "unavailable"
+
+        never.set()
+        await hass.async_block_till_done()
+
+
+async def test_an_unreachable_device_is_not_ready(hass):
+    """A device that cannot be reached must retry, not fail the entry outright."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.siemens_ozw672.api import SiemensOzw672ApiError
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
+        new_callable=AsyncMock, side_effect=SiemensOzw672ApiError("no route to host"),
+    ):
+        entry = _entry(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_rejected_credentials_are_not_ready_either(hass):
+    """A login the device refuses is reported rather than treated as success."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.config_entries import ConfigEntryState
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
+        new_callable=AsyncMock, return_value=False,
+    ):
+        entry = _entry(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_entities_are_classified_without_a_poll(hass):
+    """The entity class comes from the stored description, not from live data.
+
+    Reading the unit out of the coordinator is what forced setup to wait for a
+    complete poll in the first place.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, return_value={},
+    ):
+        entry = _entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    # No reading ever arrived, yet the temperature sensor is a temperature sensor.
+    state = _state(hass, "sensor", OUTSIDE_TEMP)
+    assert state.attributes["device_class"] == "temperature"
+    assert state.attributes["unit_of_measurement"] == "°C"
+    # ... and it is unavailable, because there is genuinely no reading yet.
+    assert state.state == "unavailable"
+
+    energy = _state(hass, "sensor", ENERGY_TOTAL)
+    assert energy.attributes["device_class"] == "energy"
+
+
+async def test_a_datapoint_without_a_stored_unit_is_reported(hass, caplog):
+    """Entries discovered before 0.8.0 carry no unit, so they cannot be classified.
+
+    Say so, rather than quietly producing a plain number sensor where a
+    temperature sensor belongs.
+    """
+    datapoints = copy.deepcopy(DATAPOINTS)
+    for datapoint in datapoints:
+        if datapoint["Id"] == "1960":
+            datapoint["DPDescr"].pop("Unit")
+
+    await _setup(hass, datapoints=datapoints)
+
+    assert "Outside temp (1960)" in caplog.text
+    assert "Re-run the integration's setup" in caplog.text
+    # It still becomes an entity, just a generic numeric one.
+    assert _state(hass, "sensor", OUTSIDE_TEMP) is not None

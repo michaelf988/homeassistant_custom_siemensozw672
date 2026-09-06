@@ -20,6 +20,8 @@ from .const import ICON_THERMOMETER
 from .const import SENSOR
 from .entity import SiemensOzw672Entity
 from .helpers import (
+    datapoint_type,
+    datapoint_unit,
     decimal_digits,
     dp_configs_for_hatype,
     parse_numeric,
@@ -45,18 +47,21 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entities = []
     for dp_config in dp_configs_for_hatype(entry, "sensor"):
         coordinator = runtime.coordinator_for(dp_config["priority"])
+        # Read from the stored description first: at setup the first poll has
+        # deliberately not run yet, so coordinator.data is still empty.
         data = (coordinator.data or {}).get(dp_config["Id"], {}).get("Data", {})
-        unit = str(data.get("Unit", "")).strip()
+        dptype = datapoint_type(dp_config, data)
+        unit = datapoint_unit(dp_config, data)
         _LOGGER.debug(f"SENSOR Adding Entity with config: {dp_config}")
-        if data.get("Type") == "Numeric" and unit in TEMPERATURE_UNITS:
+        if dptype == "Numeric" and unit in TEMPERATURE_UNITS:
             entities.append(SiemensOzw672TempSensor(coordinator, dp_config))
-        elif data.get("Type") == "Numeric" and unit == "%":
+        elif dptype == "Numeric" and unit == "%":
             entities.append(SiemensOzw672PercentSensor(coordinator, dp_config))
-        elif data.get("Type") == "Numeric" and unit in ("kWh", "Wh"):
+        elif dptype == "Numeric" and unit in ("kWh", "Wh"):
             entities.append(SiemensOzw672EnergySensor(coordinator, dp_config))
-        elif data.get("Type") == "Numeric" and unit in ("kW", "W"):
+        elif dptype == "Numeric" and unit in ("kW", "W"):
             entities.append(SiemensOzw672PowerSensor(coordinator, dp_config))
-        elif data.get("Type") == "Numeric":
+        elif dptype == "Numeric":
             entities.append(SiemensOzw672NumberSensor(coordinator, dp_config))
         else:
             # All unknown data types will produce a read only sensor
@@ -106,7 +111,10 @@ class SiemensOzw672TempSensor(SiemensOzw672NumericSensor):
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        return TEMPERATURE_UNITS.get(self._raw_unit, UnitOfTemperature.CELSIUS)
+        return TEMPERATURE_UNITS.get(
+            self._raw_unit or datapoint_unit(self.config_entry),
+            UnitOfTemperature.CELSIUS,
+        )
 
 
 class SiemensOzw672PercentSensor(SiemensOzw672NumericSensor):
@@ -129,7 +137,7 @@ class SiemensOzw672EnergySensor(SiemensOzw672NumericSensor):
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        return self._raw_unit or None
+        return self._raw_unit or datapoint_unit(self.config_entry) or None
 
 
 class SiemensOzw672PowerSensor(SiemensOzw672NumericSensor):
@@ -141,7 +149,7 @@ class SiemensOzw672PowerSensor(SiemensOzw672NumericSensor):
     @property
     def native_unit_of_measurement(self):
         """Return the native_unit_of_measurement of the sensor."""
-        return self._raw_unit or None
+        return self._raw_unit or datapoint_unit(self.config_entry) or None
 
 
 class SiemensOzw672NumberSensor(SiemensOzw672NumericSensor):
@@ -162,4 +170,4 @@ class SiemensOzw672NumberSensor(SiemensOzw672NumericSensor):
         entirely - a pressure sensor showed a bare number. No device class is set,
         so Home Assistant accepts whatever string the OZW672 reports.
         """
-        return self._raw_unit or None
+        return self._raw_unit or datapoint_unit(self.config_entry) or None
