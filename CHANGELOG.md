@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- **Datapoints are offered with the value the device currently reports.** Plenty of
+  datapoints do not apply to a given plant and read `----`; picking one costs a request
+  on every poll forever and produces a permanently unknown entity. The selection screen
+  now shows `700 Betriebsart HK1 — Schutzbetrieb` or `742 Vorlaufsollwert — (no value)`,
+  so that is visible before it is chosen. The readings are reused for the selection
+  itself, so the only extra traffic is for datapoints that end up not being picked.
+- **The polling tier is chosen on the same screen as the datapoint.** One checkbox list
+  per tier — Home Assistant cannot render a per-row radio group, so this is as close as
+  it gets. A datapoint ticked in more than one tier is rejected with an error naming the
+  offenders in the log, rather than the flow guessing.
+
+  *Also take everything else on this screen at priority 3* sweeps up the remainder, so
+  the common case is: tick the few that need to be current, then one box for the rest.
+
+  The closing screen that listed every configured datapoint is gone — with 217
+  datapoints it was unusable, which is what prompted this.
+- **Datapoints can be removed after setup**, under the integration's options →
+  *Which datapoints are configured*. Each is shown with its last reading, which costs
+  nothing because it is already in the coordinator. This matters on this hardware:
+  disabling an entity in Home Assistant does **not** stop its datapoint being polled —
+  the coordinator knows datapoints, not entity states — so removing it here is the only
+  way to actually stop paying for it.
+
+  Adding datapoints already worked: run the setup again for the same device and only the
+  not-yet-configured ones are offered.
+
+### Fixed
+
+- A validation error on a selection screen **aborted the whole setup**. Re-entering the
+  step to redisplay the form walked the menu queue on instead of re-rendering, and with
+  an empty queue that aborted the flow. Found by the first test written for the new
+  duplicate-tier check.
+
+## 0.8.0
+
+### Fixed
+
+- **Setup failed outright on a large selection.** Setup performed one HTTP request per
+  datapoint, serialised, before it returned. With a couple of hundred datapoints that
+  runs past Home Assistant's 300-second setup budget, at which point setup is cancelled
+  with a bare `CancelledError` — and because a config flow *awaits* the setup it
+  triggers, the setup wizard reported a bare **"Unknown error occurred"** and the
+  integration never loaded. Both symptoms, one cause.
+
+  Setup now makes exactly one request, to prove the device is reachable, and each
+  polling tier fills in on its own afterwards. Entities exist immediately and are
+  *unavailable* until their tier's first poll lands. An unreachable device or refused
+  credentials put the entry into retry rather than failing it.
+- **Entity classes are decided from the stored datapoint description**, not from a live
+  reading. Reading the unit out of the coordinator is what forced setup to wait for a
+  complete poll. Discovery now records the unit for every datapoint, including the
+  read-only ones whose synthesised description previously omitted it.
+- **The priority screen pre-ticked everything as "medium"** on a fresh setup, which is
+  the opposite of the documented rule that anything not picked stays in the slowest
+  tier. Only datapoints that already carry an explicit priority are pre-ticked now.
+
+### Note for existing entries
+
+A numeric datapoint discovered before 0.8.0 carries no recorded unit, so it becomes a
+plain number sensor rather than a temperature, energy or power one. Setup logs a warning
+naming those datapoints; re-running the integration's setup re-discovers them with their
+units.
+
 ## 0.7.0
 
 ### Changed

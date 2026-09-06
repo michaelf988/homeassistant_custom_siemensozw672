@@ -10,6 +10,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
@@ -49,7 +50,12 @@ from .const import MIN_SCANINTERVAL
 from .const import PRIORITY_INTERVAL_OPTIONS
 from .const import PLATFORMS
 from .const import STARTUP_MESSAGE
-from .helpers import group_datapoints_by_priority, option_int
+from .helpers import (
+    datapoint_type,
+    group_datapoints_by_priority,
+    has_stored_unit,
+    option_int,
+)
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -181,15 +187,66 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             priority=priority,
         )
 
-    for coordinator in runtime.coordinators.values():
-        await coordinator.async_config_entry_first_refresh()
+    # Setup must not wait for a full poll. The OZW672 reads one datapoint per HTTP
+    # request, serialised, so a selection of a couple of hundred datapoints takes
+    # minutes - past Home Assistant's 300-second setup budget, at which point setup
+    # is cancelled with a bare CancelledError and, because a config flow awaits the
+    # setup it triggers, the wizard reports "Unknown error occurred".
+    #
+    # So: one cheap request to prove the device is reachable, then let each tier
+    # fill in on its own. Entities exist immediately and are unavailable until
+    # their tier's first poll lands.
+    try:
+        reachable = await client.async_get_sessionid()
+    except SiemensOzw672ApiError as exception:
+        raise ConfigEntryNotReady(
+            f"Could not reach the OZW672 at {entry.data.get(CONF_HOST)}: {exception}"
+        ) from exception
+    if not reachable:
+        raise ConfigEntryNotReady(
+            f"The OZW672 at {entry.data.get(CONF_HOST)} rejected the credentials"
+        )
+
+    _warn_about_unclassifiable_datapoints(entry)
 
     hass.data[DOMAIN][entry.entry_id] = runtime
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    for priority, coordinator in runtime.coordinators.items():
+        entry.async_create_background_task(
+            hass,
+            coordinator.async_refresh(),
+            f"{DOMAIN} first poll ({priority})",
+        )
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
+
+
+def _warn_about_unclassifiable_datapoints(entry: ConfigEntry) -> None:
+    """Name the numeric datapoints whose unit discovery never recorded.
+
+    From 0.8.0 setup classifies entities from the stored description rather than
+    from a live poll, so a numeric datapoint with no recorded unit becomes a
+    plain number sensor instead of a temperature, energy or power one. Only
+    entries discovered before 0.8.0 can be in that state, and re-running
+    discovery fixes it - but silently getting the wrong entity class is exactly
+    the kind of thing that is impossible to work out from the outside.
+    """
+    unknown = [
+        f'{dp.get("Name")} ({dp.get("Id")})'
+        for dp in (entry.data.get(CONF_DATAPOINTS) or [])
+        if datapoint_type(dp) == "Numeric" and not has_stored_unit(dp)
+    ]
+    if unknown:
+        _LOGGER.warning(
+            "%d numeric datapoint(s) were discovered before units were recorded, so "
+            "they become plain number sensors rather than temperature/energy/power "
+            "ones. Re-run the integration's setup to re-discover them: %s",
+            len(unknown), ", ".join(unknown[:10]) + (" ..." if len(unknown) > 10 else ""),
+        )
 
 
 async def async_migrate_entry(hass, entry: ConfigEntry):

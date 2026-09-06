@@ -3,7 +3,7 @@
 NAME = "Siemens OZW672"
 DOMAIN = "siemens_ozw672"
 DOMAIN_DATA = f"{DOMAIN}_data"
-VERSION = "0.7.0"
+VERSION = "0.9.0"
 CONF_VERSION = 1
 CONF_MINOR_VERSION = 7
 
@@ -83,6 +83,16 @@ CONF_PRIORITY_MEDIUM = "priority_medium"
 # history; and a checkbox list has no "select all", so that is a field too.
 CONF_GO_BACK = "go_back"
 CONF_SELECT_ALL = "select_all"
+# Home Assistant cannot render a per-row radio group, so a datapoint's polling tier
+# is picked by which of three checkbox lists it is ticked in.
+CONF_DATAPOINTS_BY_PRIORITY = {
+    PRIORITY_FAST: "datapoints_fast",
+    PRIORITY_MEDIUM: "datapoints_medium",
+    PRIORITY_SLOW: "datapoints_slow",
+}
+# Takes everything on the screen that was not ticked into a tier and polls it in
+# the slowest one - the safe default for this device.
+CONF_SELECT_REST_SLOW = "select_rest_slow"
 
 # CONF_SCANINTERVAL keeps its name and its role as the *fastest* tier's interval,
 # so an existing entry's stored value keeps meaning what it always meant.
@@ -160,7 +170,7 @@ TESTDATA["SYSINFOLIST"]="""{"Device": {"Name": "OZW672.01", "Addr": "0.5", "Type
 
 TESTDATA["MENUITEMLIST"]={}
 TESTDATA["MENUITEMLIST"]["1327"]="""{"MenuItems": [{"Id": "1437", "Text": {"CatId": "2", "GroupId": "4", "Id": "295", "Long": "DHW", "Short": "DHW"}},{"Id": "1959","Text": {"CatId": "2","GroupId": "4","Id": "315","Long": "Diagnostics consumer","Short": "Diagnostics consumer"}}], "DatapointItems": [], "WidgetItems": [], "Result": {"Success": "true"}}"""
-TESTDATA["MENUITEMLIST"]["1437"]="""{"MenuItems": [], "DatapointItems": [{"Id": "1438", "Address": "0x310571", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3514", "Long": "DHW operating mode", "Short": "DHW OptgMode"}}, {"Id": "1439", "Address": "0x3106b9", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3516", "Long": "DHW temperature nominal setpoint", "Short": "DHW NomSetp"}}, {"Id": "1441", "Address": "0x250722", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3522", "Long": "DHW release", "Short": "DHW Release"}}], "WidgetItems": [], "Result": {"Success": "true"}}"""
+TESTDATA["MENUITEMLIST"]["1437"]="""{"MenuItems": [], "DatapointItems": [{"Id": "1963", "Address": "0x310999", "DpSubKey": "0", "WriteAccess": "false", "Text": {"CatId": "2", "GroupId": "2", "Id": "3599", "Long": "DHW no reading", "Short": "DHW none"}}, {"Id": "1438", "Address": "0x310571", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3514", "Long": "DHW operating mode", "Short": "DHW OptgMode"}}, {"Id": "1439", "Address": "0x3106b9", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3516", "Long": "DHW temperature nominal setpoint", "Short": "DHW NomSetp"}}, {"Id": "1441", "Address": "0x250722", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3522", "Long": "DHW release", "Short": "DHW Release"}}], "WidgetItems": [], "Result": {"Success": "true"}}"""
 TESTDATA["MENUITEMLIST"]["1438"]="""{"MenuItems": [], "DatapointItems": [{"Id": "1438", "Address": "0x310571", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3514", "Long": "DHW operating mode", "Short": "DHW OptgMode"}}], "WidgetItems": [], "Result": {"Success": "true"}}"""
 TESTDATA["MENUITEMLIST"]["1439"]="""{"MenuItems": [], "DatapointItems": [{"Id": "1439", "Address": "0x3106b9", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3516", "Long": "DHW temperature nominal setpoint", "Short": "DHW NomSetp"}}], "WidgetItems": [], "Result": {"Success": "true"}}"""
 TESTDATA["MENUITEMLIST"]["1441"]="""{"MenuItems": [], "DatapointItems": [{"Id": "1441", "Address": "0x250722", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3522", "Long": "DHW release", "Short": "DHW Release"}}], "WidgetItems": [], "Result": {"Success": "true"}}"""
@@ -188,6 +198,7 @@ TESTDATA["DATAPOINTDESCR"]["1438"]="""{"Description":{"Type":"Enumeration","Name
 TESTDATA["DATAPOINTDESCR"]["1439"]="""{"Description":{"Type":"Numeric","Value":"52.000000","Unit":"°C","Name":"DHW temperature nominal setpoint","Min":"45.000000","Max":"60.000000","Resolution":"1.000000","FieldWitdh":"10","DecimalDigits":"0","HasValid":"false","IsValid":"true"},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1441"]="""{"Description":{"Type":"Enumeration","Name":"DHW release","Enums":[{"Text":"24h/day","Value":"0","IsCurrentValue":"true"},{"Text":"Heating programs with forward shift","Value":"1","IsCurrentValue":"false"},{"Text":"Time switch program 4","Value":"2","IsCurrentValue":"false"}]},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1960"]="""{"Description":{"Type":"Numeric","Value":"15.859375","Unit":"°C","Name":"Outside temp","Min":"-50.000000","Max":"50.000000","Resolution":"0.100000","FieldWitdh":"12","DecimalDigits":"1","HasValid":"false","IsValid":"true"},"Result":{"Success":"true"}}"""
+TESTDATA["DATAPOINTDESCR"]["1963"]="""{"Description":{"Type":"Numeric","Unit":"\u00b0C","Name":"DHW no reading"},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1966"]="""{"Description":{"Type":"RadioButton","Name": "Status heat circuit pump 1","Buttons":[{"TextOpt0": "Off","TextOpt1": "On","Significance": "1","IsActive": "true"} ]},"Result": {"Success": "true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1961"]="""{"Description":{"Type":"Numeric","Value":"15.0","Unit":"kWh","Name":"Test Generic Number","Min":"0.000000","Max":"2147483647.0000005","Resolution":"1.000000","FieldWitdh":"10","DecimalDigits":"0","HasValid":"false","IsValid":"true"},"Result":{"Success":"true"}}"""
 TESTDATA["DATAPOINTDESCR"]["1970"]="""{"Description":{"Type":"TimeOfDay","Name":"Standby start"},"Result":{"Success":"true"}}"""

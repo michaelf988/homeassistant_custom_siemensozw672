@@ -68,9 +68,15 @@ Every datapoint is therefore assigned to one of three polling tiers:
 | Priority 2 — medium | 300 s | Setpoints, operating modes |
 | Priority 3 — slow | 900 s | Meter readings, diagnostics, anything you only look at |
 
-The last step of the setup wizard asks which datapoints belong in the fast and medium
-tiers. **Anything you do not pick stays in the slow tier**, so the gentlest configuration
-for the device is also the one that needs no clicks.
+The tier is chosen on the same screen as the datapoint: one checkbox list per tier.
+Home Assistant cannot render a per-row radio group, so this is as close as it gets, and a
+datapoint ticked in more than one tier is rejected rather than guessed at. *Also take
+everything else on this screen at priority 3* sweeps up the remainder — so the usual
+pattern is to tick the few that need to be current, then one box for the rest.
+
+Each datapoint is offered with the value the device reports right now. Plenty of them do
+not apply to a given plant and read `----`; one of those costs a request on every poll
+and produces a permanently unknown entity, so it is worth seeing before picking it.
 
 Each tier is polled by its own coordinator with its own interval, and a tier with no
 datapoints is never polled at all. All three share one connection and one lock, so the
@@ -80,6 +86,20 @@ requests* in the options.
 To change the assignment later, open the integration's options and choose *Which
 datapoints are polled how often*. Config entries created before this existed are migrated
 into the medium tier.
+
+## Adding and removing datapoints later
+
+- **Adding**: run the integration's setup again and pick the same device. The existing
+  entry is updated rather than duplicated, and only datapoints you have not configured
+  yet are offered.
+- **Removing**: options → *Which datapoints are configured*. Untick what you no longer
+  want polled.
+
+Removing matters more than it looks: **disabling an entity in Home Assistant does not
+stop its datapoint being polled.** The coordinator works from the configured datapoints,
+not from entity states, so a disabled entity still costs the OZW672 a request on every
+poll. Removing it here is what actually stops that. The entity stays in the registry as
+unavailable and can be deleted there.
 
 ## Options
 

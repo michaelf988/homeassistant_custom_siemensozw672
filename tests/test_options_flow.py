@@ -110,7 +110,7 @@ async def test_options_flow_opens_on_a_menu(hass):
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
     assert result["type"] is FlowResultType.MENU
-    assert set(result["menu_options"]) == {"settings", "priorities"}
+    assert set(result["menu_options"]) == {"settings", "priorities", "datapoints"}
 
 
 async def test_settings_branch_saves_changes(hass):
@@ -212,3 +212,57 @@ async def test_a_datapoint_in_both_lists_counts_as_fast(hass):
 
     stored = {dp["Id"]: dp[CONF_PRIORITY] for dp in entry.data[CONF_DATAPOINTS]}
     assert stored["1960"] == PRIORITY_FAST
+
+
+# --- removing datapoints --------------------------------------------------
+
+async def test_configured_datapoints_are_all_ticked_to_start_with(hass):
+    """The screen is about removing, so everything starts kept."""
+    entry = _add_entry(hass, EXISTING_OPTIONS)
+
+    result = await _open_branch(hass, entry, "datapoints")
+
+    assert result["step_id"] == "datapoints"
+    assert result["description_placeholders"] == {"count": "2"}
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert set(defaults[CONF_DATAPOINTS]) == {"1960", "1439"}
+
+
+async def test_unticking_a_datapoint_removes_it(hass):
+    """Disabling an entity does not stop its datapoint being polled; this does."""
+    entry = _add_entry(hass, EXISTING_OPTIONS)
+
+    result = await _open_branch(hass, entry, "datapoints")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_DATAPOINTS: ["1960"]}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [dp["Id"] for dp in entry.data[CONF_DATAPOINTS]] == ["1960"]
+
+
+async def test_keeping_everything_changes_nothing(hass):
+    """Opening the screen and pressing OK is not a way to lose datapoints."""
+    entry = _add_entry(hass, EXISTING_OPTIONS)
+
+    result = await _open_branch(hass, entry, "datapoints")
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_DATAPOINTS: ["1960", "1439"]}
+    )
+    await hass.async_block_till_done()
+
+    assert len(entry.data[CONF_DATAPOINTS]) == 2
+
+
+async def test_removing_every_datapoint_is_allowed(hass):
+    """An entry with nothing to poll must not blow up on the next reload."""
+    entry = _add_entry(hass, EXISTING_OPTIONS)
+
+    result = await _open_branch(hass, entry, "datapoints")
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_DATAPOINTS: []}
+    )
+    await hass.async_block_till_done()
+
+    assert entry.data[CONF_DATAPOINTS] == []
