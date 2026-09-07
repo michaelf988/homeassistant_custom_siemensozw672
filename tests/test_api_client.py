@@ -175,3 +175,125 @@ async def test_requests_are_serialised_for_the_device():
     client = _client(_FakeSession())
 
     assert client._request_lock is not None
+
+
+# --- writing: which parameter shape the device accepts -----------------------
+#
+# Reported from a real OZW672 (firmware 12.x): every numeric write came back
+# "datatype not supported", because IsValid=true was sent for every numeric
+# datapoint. The original integration first sent it only for HasValid=true
+# datapoints, then changed to sending it always - each shape is right on some
+# firmwares, so the client tries and remembers rather than choosing once.
+
+DATATYPE_ERROR = {
+    "Result": {"Success": "false",
+               "Error": {"Nr": "9", "Txt": "datatype not supported"}}
+}
+WRITE_OK = {"Result": {"Success": "true"}}
+
+
+def _numeric(has_valid=None):
+    descr = {"Type": "Numeric"}
+    if has_valid is not None:
+        descr["HasValid"] = has_valid
+    return {"Id": "686", "OpLine": "2214", "Name": "Schaltdiff Aus Max TWW",
+            "DPDescr": descr}
+
+
+async def test_a_numeric_without_hasvalid_is_written_without_isvalid():
+    """The shape the device that reported this bug rejects is not the first try."""
+    session = _FakeSession(WRITE_OK)
+    client = _client(session)
+
+    await client.async_write_data(_numeric(has_valid="false"), "12.0")
+
+    assert "IsValid" not in session.calls[0]
+    assert "Value=12.0" in session.calls[0]
+
+
+async def test_a_numeric_with_hasvalid_is_written_with_isvalid():
+    """A datapoint that carries a validity flag still gets one."""
+    session = _FakeSession(WRITE_OK)
+    client = _client(session)
+
+    await client.async_write_data(_numeric(has_valid="true"), "12.0")
+
+    assert "IsValid=true" in session.calls[0]
+
+
+async def test_a_rejected_shape_is_retried_the_other_way(caplog):
+    """"datatype not supported" is answered by trying the other shape, not by giving up."""
+    session = _FakeSession(DATATYPE_ERROR, WRITE_OK)
+    client = _client(session, retries=1)
+
+    response = await client.async_write_data(_numeric(has_valid="false"), "12.0")
+
+    assert response == WRITE_OK
+    assert len(session.calls) == 2
+    assert "IsValid" not in session.calls[0]
+    assert "IsValid=true" in session.calls[1]
+
+
+async def test_the_accepted_shape_is_remembered():
+    """Only the first write of a datapoint may cost two requests."""
+    session = _FakeSession(DATATYPE_ERROR, WRITE_OK, WRITE_OK)
+    client = _client(session, retries=1)
+    datapoint = _numeric(has_valid="false")
+
+    await client.async_write_data(datapoint, "12.0")
+    await client.async_write_data(datapoint, "11.5")
+
+    assert len(session.calls) == 3
+    assert "IsValid=true" in session.calls[2]
+
+
+async def test_a_write_rejected_both_ways_reports_both_attempts():
+    """The error names what was tried, so the next step is not guesswork."""
+    session = _FakeSession(DATATYPE_ERROR, DATATYPE_ERROR)
+    client = _client(session, retries=1)
+
+    with pytest.raises(SiemensOzw672ApiError) as raised:
+        await client.async_write_data(_numeric(has_valid="false"), "12.0")
+
+    message = str(raised.value)
+    assert "without IsValid" in message and "with IsValid" in message
+    assert "datatype not supported" in message
+    assert "686" in message
+
+
+async def test_a_shape_that_stops_working_is_forgotten():
+    """A remembered shape must not lock a datapoint into failing forever."""
+    session = _FakeSession(WRITE_OK, DATATYPE_ERROR, WRITE_OK)
+    client = _client(session, retries=1)
+    datapoint = _numeric(has_valid="false")
+
+    await client.async_write_data(datapoint, "12.0")
+    with pytest.raises(SiemensOzw672ApiError):
+        await client.async_write_data(datapoint, "11.5")
+    # The next write starts over from both shapes rather than repeating the one
+    # that just failed.
+    await client.async_write_data(datapoint, "11.0")
+
+    assert "IsValid" not in session.calls[2]
+
+
+async def test_non_numeric_writes_are_tried_once():
+    """Only numerics have two shapes; an enumeration must not be written twice."""
+    session = _FakeSession(DATATYPE_ERROR)
+    client = _client(session, retries=1)
+    datapoint = {"Id": "1441", "Name": "Operating mode",
+                 "DPDescr": {"Type": "Enumeration"}}
+
+    with pytest.raises(SiemensOzw672ApiError):
+        await client.async_write_data(datapoint, "2")
+
+    assert len(session.calls) == 1
+
+
+async def test_a_session_error_is_not_treated_as_a_wrong_shape():
+    """Re-authentication handles a stale session; a second shape would not."""
+    session = _FakeSession(SESSION_ERROR, OK_LOGIN, SESSION_ERROR)
+    client = _client(session, retries=1)
+
+    with pytest.raises(SiemensOzw672AuthError):
+        await client.async_write_data(_numeric(has_valid="false"), "12.0")

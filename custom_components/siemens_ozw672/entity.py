@@ -108,9 +108,18 @@ class SiemensOzw672Entity(CoordinatorEntity):
         0.109, and read coordinator.data.get("id") - a key that never exists,
         because coordinator.data is keyed by datapoint id.
         """
-        return {
+        descr = self.config_entry.get("DPDescr") or {}
+        attributes = {
             "attribution": ATTRIBUTION,
             "id": str(self.config_entry["Id"]),
             "opline": str(self.config_entry.get("OpLine", "")),
             "integration": DOMAIN,
         }
+        # The datapoint type the device reported at discovery. It decides how a
+        # write is addressed, so when the OZW672 refuses one this is the first
+        # thing worth seeing, and it is otherwise buried in the config entry.
+        if descr.get("Type"):
+            attributes["datapoint_type"] = str(descr["Type"])
+        if descr.get("HasValid") is not None:
+            attributes["has_valid"] = str(descr["HasValid"])
+        return attributes

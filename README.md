@@ -17,12 +17,15 @@ The OZW672 is a web server platform for remote monitoring of Siemens LPB/BSB pla
 original integration was built and tested against an OZW672.01 running firmware v11.0,
 monitoring an RVS43.345/109 with three AVS73.390/109 extension modules.
 
-You can also **write** values back to the OZW672, with three caveats:
+You can also **write** values back to the OZW672, with four caveats:
 
 1. The OZW672 marks only certain datapoints as writeable.
 2. Writing is supported for enumerations, numbers, switches and times of day.
 3. Some writes are silently ignored by the device. If that happens, check the same
    datapoint in the OZW672's own web UI.
+4. Numeric datapoints differ in whether they want the `IsValid` flag, and the device's own
+   description does not settle it. The first write of a datapoint may therefore cost two
+   requests while that is worked out; after that the answer is remembered.
 
 Writing a value re-reads **that one datapoint** immediately, so a changed setting shows
 the device's own answer within a second or so — it does not wait for the next poll of its

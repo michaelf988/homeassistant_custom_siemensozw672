@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.10.1
+
+### Fixed
+
+- **Numeric values could not be written at all**: every attempt came back
+  `datatype not supported`, on datapoints the device itself reports as writeable
+  (`Schaltdiff. Aus max TWW`, `Schaltdiff. Aus max HK` and the other boiler settings).
+
+  The cause is the `IsValid` parameter. The original integration first sent it only for
+  datapoints whose description says `HasValid=true`, then changed to sending it for
+  *every* numeric — and a firmware that does not want the flag rejects the write as an
+  unsupported datatype, exactly as one that wants it rejects a write without it. There is
+  no single correct shape.
+
+  The client now takes the description's `HasValid` as its first guess, falls back to the
+  other shape when the device refuses, and remembers what that datapoint accepted — so
+  only the first write of a datapoint can cost two requests. If both shapes are refused,
+  the error names both attempts and the device's own message instead of just the last one.
+
+  Enumerations, switches and times are written exactly as before: only numerics have two
+  possible shapes.
+
+### Added
+
+- Entities carry `datapoint_type` and, where the device reports it, `has_valid` in their
+  attributes. When the OZW672 refuses a write, that is the first thing worth looking at,
+  and it was previously buried in the config entry where it could not be seen.
+
 ## 0.10.0
 
 ### Changed
