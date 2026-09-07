@@ -57,6 +57,9 @@ class SiemensOzw672ApiClient:
         self._retries = retries
         self._verify_ssl = verify_ssl
         self._request_delay = request_delay
+        # Which write parameter shape this device accepted, per datapoint id. See
+        # _write_shapes(): the device's own description does not settle it.
+        self._accepted_write_shape: dict[str, dict] = {}
         # The OZW672 is a small embedded web server that copes badly with parallel
         # requests. Every request in this client goes through this lock, so however
         # many coordinators or entities call in, the device only ever sees one
@@ -205,28 +208,89 @@ class SiemensOzw672ApiClient:
         return consolidated_response
         # Sample response {"Data": {"Type": "Enumeration", "Value": "On", "Unit": ""}, "Result": {"Success": "true"}}
 
+    @staticmethod
+    def _write_shapes(dptype: str, descr: dict) -> list[dict]:
+        """The parameter shapes to try for a write, most likely first.
+
+        Whether a numeric write must carry IsValid is not something this device
+        answers consistently. The original integration first sent it only when the
+        description said HasValid ("FIX - Support updating Numeric fields with
+        HasValid=true"), then changed to sending it for every numeric ("FIX -
+        isValid true for all numeric values"). Both are real: a firmware that
+        wants the flag answers "datatype not supported" without it, and one that
+        does not want it answers "datatype not supported" with it.
+
+        So the shape is not decided here once and for all. The description's own
+        HasValid picks the first attempt, and the caller falls back to the other.
+        """
+        if dptype != "Numeric":
+            return [{}]
+        if str(descr.get("HasValid", "")).strip().lower() == "true":
+            return [{"IsValid": "true"}, {}]
+        return [{}, {"IsValid": "true"}]
+
+    @staticmethod
+    def _describe_shape(shape: dict) -> str:
+        """Name a parameter shape for a log line."""
+        return "with IsValid" if shape else "without IsValid"
+
     async def async_write_data(self, datapoint, value) -> dict:
-        """Write the Data for a single datapoint to the OZW672."""
+        """Write the Data for a single datapoint to the OZW672.
+
+        Tries the parameter shapes the device might accept and remembers the one
+        it took, so only the first write of a datapoint can cost two requests.
+        """
         _LOGGER.debug(f"async_write_data Writing data for datapoint : {datapoint}")
         if isinstance(datapoint, str):
             dpdata = json.loads(datapoint)
         else:
             dpdata = datapoint
         id = dpdata["Id"]
-        dptype = dpdata["DPDescr"]["Type"]
-        params = {"SessionId": self._sessionid, "Id": id, "Type": dptype, "Value": value}
-        if dptype == "Numeric":  # and ("HasValid" in dpdata["DPDescr"]):
-            params["IsValid"] = "true"
-        url = self._url("menutree/write_datapoint.json", **params)
-        if (self._host == "test"):
-            # I could do something here to make the test work using the DPDescr cached data
-            response = json.loads(TESTDATA["DATAPOINT"][id])
+        descr = dpdata.get("DPDescr") or {}
+        dptype = descr.get("Type", "")
+
+        if id in self._accepted_write_shape:
+            shapes = [self._accepted_write_shape[id]]
         else:
-            response = await self.api_wrapper("get", url)
-        _LOGGER.debug(f"async_write_data Datapoint Data response : {response}")
-        if response.get("Result", {}).get("Success") == "true":
-            return response
-        raise SiemensOzw672ApiError(f"The OZW672 rejected the write to datapoint {id}")
+            shapes = self._write_shapes(dptype, descr)
+
+        failures = []
+        for shape in shapes:
+            params = {
+                "SessionId": self._sessionid, "Id": id, "Type": dptype,
+                "Value": value, **shape,
+            }
+            url = self._url("menutree/write_datapoint.json", **params)
+            try:
+                if (self._host == "test"):
+                    # I could do something here to make the test work using the DPDescr cached data
+                    response = json.loads(TESTDATA["DATAPOINT"][id])
+                else:
+                    response = await self.api_wrapper("get", url)
+            except SiemensOzw672AuthError:
+                # A session problem is not something a different shape can fix.
+                raise
+            except SiemensOzw672ApiError as exception:
+                failures.append(f"{self._describe_shape(shape)}: {exception}")
+                continue
+            _LOGGER.debug(f"async_write_data Datapoint Data response : {response}")
+            if response.get("Result", {}).get("Success") == "true":
+                if self._accepted_write_shape.get(id) != shape and len(shapes) > 1:
+                    _LOGGER.info(
+                        "The OZW672 accepts writes to datapoint %s %s; using that "
+                        "from now on", id, self._describe_shape(shape),
+                    )
+                self._accepted_write_shape[id] = shape
+                return response
+            failures.append(f"{self._describe_shape(shape)}: the device rejected the write")
+
+        # A remembered shape that stopped working is worth forgetting, so the next
+        # write starts from scratch rather than repeating a failure forever.
+        self._accepted_write_shape.pop(id, None)
+        raise SiemensOzw672ApiError(
+            f"The OZW672 refused to write {value} to datapoint {id} "
+            f"(type {dptype or 'unknown'}). Tried " + "; ".join(failures)
+        )
 
     async def async_get_data_descr(self, datapoints, all_dpdata, force=False) -> dict:
         """Get the DataPoint Descriptions for multiple datapoints from the OZW672. """
