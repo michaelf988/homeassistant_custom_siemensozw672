@@ -38,6 +38,7 @@ from custom_components.siemens_ozw672.const import (
     PRIORITY_FAST,
     PRIORITY_MEDIUM,
 )
+from custom_components.siemens_ozw672.helpers import datapoint_identifier
 from custom_components.siemens_ozw672.remap import resolve_datapoints, tree_stamp
 
 # TreeDate/TreeTime of the RVS43 in TESTDATA["DEVICELIST"].
@@ -115,8 +116,14 @@ async def _setup(hass, entry):
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
+def _unique_id(hass, opline):
+    """The unique id of the configured datapoint with this operating line."""
+    entry = hass.config_entries.async_get_entry(ENTRY_ID)
+    return f"{ENTRY_ID}_{datapoint_identifier(_stored(entry, opline))}"
+
+
 def _state(hass, domain, opline):
-    entity_id = er.async_get(hass).async_get_entity_id(domain, DOMAIN, f"{ENTRY_ID}_{opline}")
+    entity_id = er.async_get(hass).async_get_entity_id(domain, DOMAIN, _unique_id(hass, opline))
     return hass.states.get(entity_id) if entity_id else None
 
 
@@ -300,7 +307,7 @@ async def test_unfindable_datapoint_is_neither_polled_nor_written(hass):
     issue = ir.async_get(hass).async_get_issue(DOMAIN, f"{ISSUE_UNRESOLVED}_{ENTRY_ID}")
     assert issue is not None and "Gone" in issue.translation_placeholders["datapoints"]
 
-    entity_id = er.async_get(hass).async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_123")
+    entity_id = er.async_get(hass).async_get_entity_id("number", DOMAIN, _unique_id(hass, "123"))
     with patch.object(SiemensOzw672ApiClient, "async_write_data") as write:
         try:
             await hass.services.async_call(

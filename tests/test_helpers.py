@@ -29,6 +29,7 @@ from custom_components.siemens_ozw672.helpers import (
     clean_value,
     datapoint_identifier,
     is_on_value,
+    legacy_datapoint_identifier,
     on_off_labels,
     decimal_digits,
     descr_float,
@@ -129,6 +130,16 @@ def test_datapoint_identifier_prefers_opline():
     assert datapoint_identifier({"Id": "1438", "OpLine": "nonsense"}) == "001438"
 
 
+def test_datapoint_identifier_tells_rooms_apart():
+    """A QAX910 has the same operating line once per room; the menu path differs (#10)."""
+    cellar = {"Id": "2001", "OpLine": "303", "MenuItem": "Ruimten->Kelder->Ruimtetoestand"}
+    living = {"Id": "2101", "OpLine": "303", "MenuItem": "Ruimten->Woonkamer->Ruimtetoestand"}
+
+    assert datapoint_identifier(cellar) == "303_ruimten_kelder_ruimtetoestand"
+    assert datapoint_identifier(living) == "303_ruimten_woonkamer_ruimtetoestand"
+    assert legacy_datapoint_identifier(cellar) == legacy_datapoint_identifier(living) == "303"
+
+
 async def test_build_dp_configs_does_not_mutate_the_config_entry(hass):
     """Runtime keys stay out of the stored config entry.
 
@@ -140,7 +151,7 @@ async def test_build_dp_configs_does_not_mutate_the_config_entry(hass):
 
     configs = build_dp_configs(entry)
 
-    assert configs[0]["entry_id"] == "helper_entry_39"
+    assert configs[0]["entry_id"] == "helper_entry_39_diagnostics"
     assert configs[0]["device_id"] == "helper_entry"
     assert configs[0]["entity_prefix"] == "Diagnostics - 39 "
     for stored in entry.data[CONF_DATAPOINTS]:

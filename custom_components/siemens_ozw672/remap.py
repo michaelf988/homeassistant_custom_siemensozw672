@@ -25,8 +25,9 @@ the first verification on - its bus address (Address + DpSubKey). This module
   better than one showing, or writing, something else - and a repair issue lists
   them.
 
-Entities keep their unique_id (it is built from the OpLine, not the Id), so
-entity ids, dashboards, automations and history survive a remap untouched.
+Entities keep their unique_id (it is built from the OpLine and the menu path,
+not the Id), so entity ids, dashboards, automations and history survive a remap
+untouched.
 """
 from __future__ import annotations
 

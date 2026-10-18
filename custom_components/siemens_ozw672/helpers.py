@@ -11,6 +11,7 @@ from datetime import datetime, time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.util import slugify
 
 from .const import (
     CONF_DATAPOINTS,
@@ -25,6 +26,7 @@ from .const import (
     DEFAULT_PRIORITY,
     DEFAULT_USE_DEVICE_LONGNAME,
     DP_UNRESOLVED,
+    HATYPE_DOMAINS,
     PRIORITIES,
 )
 
@@ -281,12 +283,17 @@ def platform_enabled(entry: ConfigEntry, platform: str) -> bool:
     return entry.options.get(platform, True) is not False
 
 
-def datapoint_identifier(datapoint: dict) -> str:
-    """Stable per-datapoint suffix for the entity unique_id.
+def legacy_datapoint_identifier(datapoint: dict) -> str:
+    """The unique_id suffix used up to 0.11.0: the operating line alone.
 
     Prefers the operating line number from the manual, because the API's own
     datapoint Id changes whenever the OZW672 regenerates its menu tree. Falls
     back to the API Id when there is no usable operating line.
+
+    The operating line is only unique per menu. A Synco living QAX910 repeats the
+    same menus once per room, so "303 Room temperature actual" exists in every
+    room, and every entity after the first was rejected as a duplicate (issue
+    #10). Only kept to find the registry entries that still carry it.
     """
     try:
         opline = int(datapoint.get("OpLine"))
@@ -295,6 +302,25 @@ def datapoint_identifier(datapoint: dict) -> str:
     if opline > 1:
         return str(datapoint["OpLine"])
     return "00" + str(datapoint.get("Id", ""))
+
+
+def datapoint_identifier(datapoint: dict) -> str:
+    """Stable per-datapoint suffix for the entity unique_id.
+
+    The operating line plus the menu path it was discovered under. Both survive
+    the OZW672 renumbering its datapoints - remap.py finds datapoints again by
+    exactly these two - and together they tell the rooms of a QAX910 apart. The
+    API Id would be unique too, but it changes with every regeneration.
+    """
+    identifier = legacy_datapoint_identifier(datapoint)
+    menu = slugify(str(datapoint.get("MenuItem") or ""))
+    return f"{identifier}_{menu}" if menu else identifier
+
+
+def entity_domain(datapoint: dict) -> str | None:
+    """The entity domain the platforms create this datapoint's entity in."""
+    hatype = (datapoint.get("DPDescr") or {}).get("HAType")
+    return HATYPE_DOMAINS.get(hatype)
 
 
 def datapoint_priority(datapoint: dict) -> str:

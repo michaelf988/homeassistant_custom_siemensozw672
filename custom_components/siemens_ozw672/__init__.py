@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -52,9 +53,12 @@ from .const import PRIORITY_INTERVAL_OPTIONS
 from .const import PLATFORMS
 from .const import STARTUP_MESSAGE
 from .helpers import (
+    datapoint_identifier,
     datapoint_type,
+    entity_domain,
     group_datapoints_by_priority,
     has_stored_unit,
+    legacy_datapoint_identifier,
     option_int,
 )
 
@@ -217,6 +221,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         )
 
     _warn_about_unclassifiable_datapoints(entry)
+    _async_migrate_unique_ids(hass, entry)
 
     hass.data[DOMAIN][entry.entry_id] = runtime
 
@@ -236,6 +241,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         )
 
     return True
+
+
+@callback
+def _async_migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Move registry entries from the operating-line-only unique_id to the current one.
+
+    Up to 0.11.0 the unique_id was "<entry>_<operating line>". That collided on a
+    Synco living QAX910, which repeats the same menus per room (issue #10), so it
+    now carries the menu path as well. Renaming the registry entry in place keeps
+    its entity_id, name, area and history.
+
+    Where several datapoints shared an old unique_id, Home Assistant had only
+    created the entity of the first one in the stored order, so that is the one
+    the existing entry is handed to: it is claimed first, and once renamed the old
+    unique_id is gone for the others. Runs on every setup and does nothing once
+    nothing old is left.
+    """
+    registry = er.async_get(hass)
+    for datapoint in entry.data.get(CONF_DATAPOINTS) or []:
+        domain = entity_domain(datapoint)
+        old = f"{entry.entry_id}_{legacy_datapoint_identifier(datapoint)}"
+        new = f"{entry.entry_id}_{datapoint_identifier(datapoint)}"
+        if domain is None or old == new:
+            continue
+        entity_id = registry.async_get_entity_id(domain, DOMAIN, old)
+        if entity_id is None or registry.async_get_entity_id(domain, DOMAIN, new):
+            continue
+        _LOGGER.debug("Moving %s from unique_id %s to %s", entity_id, old, new)
+        registry.async_update_entity(entity_id, new_unique_id=new)
 
 
 def _warn_about_unclassifiable_datapoints(entry: ConfigEntry) -> None:
