@@ -17,6 +17,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import SiemensOzw672ApiClient, SiemensOzw672ApiError
+from .remap import DatapointVerifier, VerificationPending
 from .const import CONF_DATAPOINTS
 from .const import CONF_DEVICE
 from .const import CONF_DEVICE_ID
@@ -146,6 +147,7 @@ class SiemensOzw672Runtime:
     """
 
     client: SiemensOzw672ApiClient
+    verifier: DatapointVerifier | None = None
     coordinators: dict = field(default_factory=dict)
 
     def coordinator_for(self, priority: str):
@@ -171,7 +173,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     _LOGGER.debug("STARTUP - Setting up config entry %s", entry.entry_id)
     client = _build_client(hass, entry)
-    runtime = SiemensOzw672Runtime(client=client)
+    # Every tier asks the verifier before it polls, so no reading is published
+    # until the stored datapoint Ids are known to match the device (remap.py).
+    verifier = DatapointVerifier(hass, entry, client)
+    runtime = SiemensOzw672Runtime(client=client, verifier=verifier)
 
     for priority, tier_datapoints in group_datapoints_by_priority(entry).items():
         interval = _interval_for(entry, priority)
@@ -185,6 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             datapoints=tier_datapoints,
             scaninterval=timedelta(seconds=interval),
             priority=priority,
+            verifier=verifier,
         )
 
     # Setup must not wait for a full poll. The OZW672 reads one datapoint per HTTP
@@ -213,14 +219,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Registered before the first poll starts: that poll verifies the stored
+    # datapoint Ids, and when it has to correct them it updates the entry and
+    # relies on this listener to reload with the corrected Ids. Background tasks
+    # start eagerly, so registering afterwards could miss that update.
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     for priority, coordinator in runtime.coordinators.items():
         entry.async_create_background_task(
             hass,
             coordinator.async_refresh(),
             f"{DOMAIN} first poll ({priority})",
         )
-
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
 
@@ -404,12 +414,14 @@ class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
         datapoints,
         scaninterval,
         priority: str = DEFAULT_PRIORITY,
+        verifier: DatapointVerifier | None = None,
     ) -> None:
         """Initialize."""
         self.api = client
         self.platforms = []
         self.datapoints = datapoints
         self.priority = priority
+        self.verifier = verifier
         super().__init__(
             hass, _LOGGER, name=f"{DOMAIN} ({priority})", update_interval=scaninterval
         )
@@ -436,8 +448,17 @@ class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Update all data via the OZW672 Web API."""
         try:
+            if self.verifier is not None:
+                await self.verifier.async_before_poll(self.priority, self.datapoints)
             return await self.api.async_get_data(self.datapoints)
+        except VerificationPending as exception:
+            raise UpdateFailed(f"Waiting for datapoint verification: {exception}") from exception
         except SiemensOzw672ApiError as exception:
+            if self.verifier is not None:
+                # Nothing at all could be read. If the device restarted in the
+                # meantime it may have renumbered its datapoints, so the next
+                # successful contact checks that before trusting the Ids again.
+                self.verifier.connection_lost()
             raise UpdateFailed(str(exception)) from exception
         except Exception as exception:  # pylint: disable=broad-except
             _LOGGER.debug(f'Exception: {repr(exception)}')

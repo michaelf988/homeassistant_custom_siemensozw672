@@ -345,3 +345,39 @@ async def test_every_stored_datapoint_carries_a_tier(hass, field):
     )
 
     assert all(CONF_PRIORITY in dp for dp in result["data"][CONF_DATAPOINTS])
+
+
+# --- re-running discovery for a configured device --------------------------
+
+async def test_a_configured_datapoint_is_not_offered_again_after_a_renumbering(hass):
+    """Recognised by its menu and operating line, not by an Id the device changed.
+
+    Matching on the Id offered an already configured datapoint again as soon as the
+    OZW672 had renumbered its tree - and picking it duplicated the entity.
+    """
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.siemens_ozw672.const import CONF_DEVICE_ID
+
+    MockConfigEntry(
+        domain=DOMAIN,
+        version=CONF_VERSION,
+        minor_version=CONF_MINOR_VERSION,
+        unique_id="00FD3100033C:008600004EBF",
+        data={
+            CONF_HOST: "test", CONF_PROTOCOL: "http",
+            CONF_USERNAME: "user", CONF_PASSWORD: "pass",
+            CONF_DEVICE_ID: "00FD3100033C:008600004EBF",
+            CONF_DATAPOINTS: [{
+                "Id": "5555", "OpLine": "3514", "Name": "DHW operating mode",
+                "MenuItem": "DHW", "WriteAccess": "true",
+                "DPDescr": {"Type": "Enumeration", "HAType": "switch"},
+            }],
+        },
+    ).add_to_hass(hass)
+
+    result = await _walk_to_datapoints(hass)
+
+    labels = [option["label"] for option in _options(result, FAST)]
+    assert len(labels) == 3
+    assert not any("DHW operating mode" in label for label in labels)

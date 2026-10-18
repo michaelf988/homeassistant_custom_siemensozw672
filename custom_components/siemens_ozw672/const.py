@@ -3,7 +3,7 @@
 NAME = "Siemens OZW672"
 DOMAIN = "siemens_ozw672"
 DOMAIN_DATA = f"{DOMAIN}_data"
-VERSION = "0.10.1"
+VERSION = "0.11.0"
 CONF_VERSION = 1
 CONF_MINOR_VERSION = 7
 
@@ -60,6 +60,17 @@ CONF_HTTPRETRIES = "httpretries"
 CONF_USE_DEVICE_LONGNAME = "use_device_longname"
 CONF_VERIFY_SSL = "verify_ssl"
 CONF_REQUEST_DELAY = "request_delay"
+# When the device's menu tree was generated (TreeDate/TreeTime from the device
+# list) at the time the stored datapoint Ids were last verified. See remap.py.
+CONF_TREESTAMP = "treestamp"
+
+# Per-datapoint keys recorded by the verification in remap.py.
+DP_ADDRESS = "Address"
+DP_SUBKEY = "DpSubKey"
+DP_UNRESOLVED = "Unresolved"
+# How the config flow joins nested menu names into a datapoint's MenuItem.
+MENU_SEPARATOR = "->"
+ISSUE_UNRESOLVED = "unresolved_datapoints"
 
 # Polling priorities. The OZW672 is a small embedded web server and every datapoint
 # costs it one HTTP request, so not everything deserves the same poll rate. Each

@@ -573,8 +573,18 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             ### If we are already polling a variable - don't list it.
             already_exists=False
             for edp in existing_dp_items:
-                if edp["Id"] == dp["Id"]:
-                    already_exists=True
+                # Matching on the Id alone offered an already configured
+                # datapoint again once the OZW672 had renumbered its menu tree,
+                # and hid a different one that happened to get the old Id. Its
+                # place in the menu and its operating line do not change.
+                if "MenuItem" in edp:
+                    already_exists = (
+                        edp["MenuItem"] == menutree_menulocation
+                        and str(edp.get("OpLine")) == str(dp["Text"]["Id"])
+                    )
+                else:
+                    already_exists = edp["Id"] == dp["Id"]
+                if already_exists:
                     break
             ### If this is something new to monitor - add it to our Dict.
             if not already_exists:

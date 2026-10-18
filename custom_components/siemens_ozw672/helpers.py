@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_PREFIX_OPLINE,
     DEFAULT_PRIORITY,
     DEFAULT_USE_DEVICE_LONGNAME,
+    DP_UNRESOLVED,
     PRIORITIES,
 )
 
@@ -288,9 +289,15 @@ def group_datapoints_by_priority(entry: ConfigEntry) -> dict[str, list[dict]]:
 
     Tiers with no datapoints are left out entirely, so no coordinator is created
     for them and the device is never polled for an empty list.
+
+    Datapoints the last verification could not find on the device again
+    (remap.py) are left out too: their stored Id may now belong to a different
+    datapoint, so polling it would show that one's value.
     """
     grouped: dict[str, list[dict]] = {}
     for datapoint in entry.data.get(CONF_DATAPOINTS) or []:
+        if datapoint.get(DP_UNRESOLVED):
+            continue
         grouped.setdefault(datapoint_priority(datapoint), []).append(datapoint)
     return grouped
 
