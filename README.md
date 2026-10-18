@@ -109,6 +109,19 @@ not from entity states, so a disabled entity still costs the OZW672 a request on
 poll. Removing it here is what actually stops that. The entity stays in the registry as
 unavailable and can be deleted there.
 
+## When the OZW672 renumbers its datapoints
+
+The OZW672 numbers its datapoints when it generates its menu tree, and it regenerates
+that tree on its own — after a restart, a power cut or a firmware update. The integration
+notices (from the tree date the device reports, and from a spot check of one datapoint
+per poll) and finds every configured datapoint again by its menu, operating line and bus
+address. The stored Ids are corrected and the entry reloads once; entities, their ids and
+their history are untouched. The log says how many datapoints moved.
+
+A datapoint that cannot be matched unambiguously is not polled or written any more —
+its entity stays unavailable rather than showing another datapoint's value — and a
+repair issue lists it.
+
 ## Options
 
 Open the integration's options and choose *Connection, polling intervals and entity

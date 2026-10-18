@@ -9,6 +9,8 @@ import copy
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .test_remap import TESTDATA_TREESTAMP
+
 from custom_components.siemens_ozw672.const import (
     CONF_DATAPOINTS,
     CONF_INTERVAL_MEDIUM,
@@ -20,6 +22,7 @@ from custom_components.siemens_ozw672.const import (
     PRIORITY_SLOW,
     CONF_DEVICE,
     CONF_DEVICE_ID,
+    CONF_TREESTAMP,
     CONF_DEVICE_LONGNAME,
     CONF_HOST,
     CONF_MINOR_VERSION,
@@ -85,6 +88,8 @@ def _entry(hass, datapoints=None, options=None):
             CONF_DEVICE: "RVS43",
             CONF_DEVICE_LONGNAME: "0.1 RVS43.345/109",
             CONF_DEVICE_ID: "00FD3100033C:008600004EBF",
+            # Verified against the TESTDATA tree before, so setup trusts the Ids.
+            CONF_TREESTAMP: TESTDATA_TREESTAMP,
             CONF_DATAPOINTS: copy.deepcopy(datapoints if datapoints is not None else DATAPOINTS),
             # Prefixes off so entity ids stay predictable in the assertions.
             CONF_PREFIX_FUNCTION: False,

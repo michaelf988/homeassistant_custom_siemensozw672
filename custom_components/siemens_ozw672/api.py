@@ -66,6 +66,10 @@ class SiemensOzw672ApiClient:
         # request at a time.
         self._request_lock = asyncio.Lock()
         self._last_request_finished = 0.0
+        # Bumped whenever the device rejected our session and we had to log in
+        # again mid-operation. The usual reason is that the OZW672 restarted - and
+        # a restart is when it may have renumbered its datapoints (remap.py).
+        self.session_generation = 0
 
     def _redact(self, url: str) -> str:
         """Return a URL safe to log: no session id, no password."""
@@ -150,6 +154,23 @@ class SiemensOzw672ApiClient:
             return response["DatapointItems"]
         return None
         #Sample response: {"MenuItems": [], "DatapointItems": [{"Id": "1438", "Address": "0x310571", "DpSubKey": "0", "WriteAccess": "true", "Text": {"CatId": "2", "GroupId": "2", "Id": "3514", "Long": "DHW operating mode", "Short": "DHW OptgMode"}}], "WidgetItems": [], "Result": {"Success": "true"}}"""
+
+    async def async_get_description(self, id) -> dict | None:
+        """The device's description of one datapoint, or None if it gives none.
+
+        Sample: ./api/menutree/datapoint_desc.json?SessionId=...&Id=1439
+        """
+        url = self._url("menutree/datapoint_desc.json", SessionId=self._sessionid, Id=id)
+        if (self._host == "test"):
+            raw = TESTDATA["DATAPOINTDESCR"].get(str(id))
+            if raw is None:
+                return None
+            response = json.loads(raw)
+        else:
+            response = await self.api_wrapper("get", url)
+        if response.get("Result", {}).get("Success") == "true":
+            return response.get("Description")
+        return None
 
     async def async_get_data(self, datapoints) -> dict:
         """Get the Data for multiple datapoints from the OZW672.
@@ -459,6 +480,7 @@ class SiemensOzw672ApiClient:
                     f"Re-authentication did not resolve the session error for url: {logurl}"
                 )
             await self.async_get_sessionid()
+            self.session_generation += 1
             # Search and replace SessionId
             newurl = url.replace(
                 f"SessionId={cache_sessionid}", f"SessionId={self._sessionid}"

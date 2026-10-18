@@ -104,5 +104,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "unresolved_datapoints": {
+      "title": "OZW672 datapoints could not be found again",
+      "description": "The OZW672 renumbered its datapoints (it does that when it regenerates its menu tree, for example after a restart or a firmware update). Most datapoints were found again automatically, but {count} could not be matched unambiguously and are no longer polled or written, so their entities stay unavailable instead of showing another datapoint's value:\n\n{datapoints}\n\nIf the datapoint still exists on the device, remove it under the integration's options (Which datapoints are configured) and add it again by re-running the setup. This is checked again on every restart."
+    }
   }
 }

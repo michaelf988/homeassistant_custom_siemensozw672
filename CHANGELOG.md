@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.0
+
+### Fixed
+
+- **Entities showed the values of other datapoints after the OZW672 renumbered its
+  menu tree.** The OZW672 numbers its datapoints when it generates its menu tree, and it
+  regenerates that tree on its own — after a restart, a power cut or a firmware update.
+  The config entry kept the Ids from discovery, so after a regeneration most entities
+  silently showed a *neighbouring* datapoint: a fan speed as the return temperature, a
+  date as the clock, two DHW setpoints swapped, plus a stream of `----` and unreadable
+  Ids. Worse, a write went to whatever datapoint now sat behind the old Id.
+
+  The integration now finds its datapoints again by where they live — menu path,
+  operating line and, from the first check on, bus address — and corrects the stored Ids
+  before anything is polled. Entities keep their unique ids (they never depended on the
+  Id), so entity ids, dashboards, automations and history carry on unchanged. Nothing has
+  to be configured again.
+
+  A regeneration is noticed three ways: the tree stamp (`TreeDate`/`TreeTime`) the device
+  list reports for the device, checked on every start, after an outage and after the
+  device dropped the session; and a spot check on every poll that compares one
+  datapoint's description with what it was at discovery, rotating through the tier.
+
+- **A datapoint that cannot be found again is no longer polled or written.** Its entity
+  stays unavailable instead of showing another datapoint's value, a write to it is
+  refused, and a repair issue lists it.
+
+- Re-running discovery for a configured device recognised existing datapoints by Id, so
+  after a renumbering it offered them again (and hid others). It now recognises them by
+  menu and operating line.
+
 ## 0.10.1
 
 ### Fixed

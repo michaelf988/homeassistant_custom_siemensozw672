@@ -7,6 +7,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .api import SiemensOzw672ApiError
 from .const import ATTRIBUTION
 from .const import DOMAIN
+from .const import DP_UNRESOLVED
 from .const import MANUFACTURER
 from .const import VERSION
 from .helpers import clean_value, readings_match
@@ -49,6 +50,10 @@ class SiemensOzw672Entity(CoordinatorEntity):
         could not read instead of failing the whole poll, so this is how a single
         unreadable datapoint shows up: one unavailable entity, not fifty.
         """
+        if self.config_entry.get(DP_UNRESOLVED):
+            # Not found on the device again after it renumbered its datapoints
+            # (remap.py). Its stored Id may belong to another datapoint by now.
+            return False
         if not super().available:
             return False
         return self.config_entry["Id"] in (self.coordinator.data or {})
@@ -81,6 +86,11 @@ class SiemensOzw672Entity(CoordinatorEntity):
         out loud rather than leaving the user to spot it.
         """
         name = self.config_entry["Name"]
+        if self.config_entry.get(DP_UNRESOLVED):
+            raise HomeAssistantError(
+                f"{name} could not be found on the OZW672 after it renumbered its "
+                "datapoints, so nothing was written; see Settings > Repairs"
+            )
         try:
             await self.coordinator.api.async_write_data(self.config_entry, value)
         except SiemensOzw672ApiError as exception:
