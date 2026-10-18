@@ -31,6 +31,14 @@ class SiemensOzw672AuthError(SiemensOzw672ApiError):
     """Authentication against the OZW672 failed."""
 
 
+class SiemensOzw672CredentialsError(SiemensOzw672AuthError):
+    """The OZW672 rejected the username or password.
+
+    Unlike a session the device keeps throwing away, retrying cannot fix this,
+    so Home Assistant asks the user for the credentials again instead.
+    """
+
+
 class SiemensOzw672ApiClient:
     def __init__(
         self,
@@ -479,7 +487,13 @@ class SiemensOzw672ApiClient:
                 raise SiemensOzw672AuthError(
                     f"Re-authentication did not resolve the session error for url: {logurl}"
                 )
-            await self.async_get_sessionid()
+            if not await self.async_get_sessionid():
+                # Logging in again was refused outright, typically because the
+                # password was changed on the device. Retrying the request with
+                # the old session would only fail again.
+                raise SiemensOzw672CredentialsError(
+                    f"The OZW672 at {self._host} rejected the username or password"
+                )
             self.session_generation += 1
             # Search and replace SessionId
             newurl = url.replace(

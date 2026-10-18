@@ -7,7 +7,7 @@ from .const import BINARY_SENSOR
 from .const import BINARY_SENSOR_DEVICE_CLASS
 from .const import DOMAIN
 from .entity import SiemensOzw672Entity
-from .helpers import dp_configs_for_hatype, platform_enabled
+from .helpers import dp_configs_for_hatype, is_on_value, platform_enabled
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -39,7 +39,4 @@ class SiemensOzw672BinarySensor(SiemensOzw672Entity, BinarySensorEntity):
         The device's no-data sentinel used to compare unequal to "On" and so read
         as a confident Off.
         """
-        value = self._raw_value
-        if value is None:
-            return None
-        return value == "On"
+        return is_on_value(self.config_entry, self._raw_value)

@@ -39,7 +39,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
-from .api import SiemensOzw672ApiClient, SiemensOzw672ApiError
+from .api import SiemensOzw672ApiClient, SiemensOzw672ApiError, SiemensOzw672CredentialsError
 from .const import (
     CONF_DATAPOINTS,
     CONF_DEVICE_ID,
@@ -322,6 +322,9 @@ class DatapointVerifier:
                 data.get(CONF_DEVICE_LONGNAME),
                 {dp.get("MenuItem", "") for dp in datapoints},
             )
+        except SiemensOzw672CredentialsError:
+            # Not a reason to wait: the coordinator turns it into a reauth prompt.
+            raise
         except SiemensOzw672ApiError as exception:
             raise VerificationPending(f"menu tree could not be read: {exception}") from exception
 

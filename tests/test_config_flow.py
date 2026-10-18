@@ -381,3 +381,66 @@ async def test_a_configured_datapoint_is_not_offered_again_after_a_renumbering(h
     labels = [option["label"] for option in _options(result, FAST)]
     assert len(labels) == 3
     assert not any("DHW operating mode" in label for label in labels)
+
+
+# --- re-authentication --------------------------------------------------------
+
+def _reauth_entry(hass):
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=CONF_VERSION,
+        minor_version=CONF_MINOR_VERSION,
+        unique_id="00FD3100033C:008600004EBF",
+        data={
+            CONF_HOST: "ozw.example", CONF_PROTOCOL: "http",
+            CONF_USERNAME: "user", CONF_PASSWORD: "old",
+            CONF_DATAPOINTS: [],
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_reauth_stores_the_new_credentials_in_the_same_entry(hass):
+    """Only the credentials change; the entry - and so every entity - stays."""
+    entry = _reauth_entry(hass)
+    result = await entry.start_reauth_flow(hass)
+    assert result["step_id"] == "reauth_confirm"
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
+        return_value=True,
+    ), patch(
+        "custom_components.siemens_ozw672.async_setup_entry", return_value=True,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_USERNAME: "admin", CONF_PASSWORD: "new"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_USERNAME] == "admin"
+    assert entry.data[CONF_PASSWORD] == "new"
+    assert entry.data[CONF_HOST] == "ozw.example"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+
+
+async def test_reauth_with_wrong_credentials_stays_on_the_form(hass):
+    entry = _reauth_entry(hass)
+    result = await entry.start_reauth_flow(hass)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
+        return_value=False,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_USERNAME: "user", CONF_PASSWORD: "still wrong"}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {"base": "auth"}
+    assert entry.data[CONF_PASSWORD] == "old"

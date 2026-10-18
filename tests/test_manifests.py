@@ -142,6 +142,9 @@ def test_every_config_step_is_translated():
             for name in vars(handler)
             if name.startswith("async_step_")
         }
+        # The entry point Home Assistant calls; it shows no form of its own and
+        # goes straight to reauth_confirm.
+        steps.discard("reauth")
         translated = set(strings[section]["step"])
         assert steps <= translated, (
             f"{section} steps without translations: {sorted(steps - translated)}"

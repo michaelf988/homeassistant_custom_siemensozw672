@@ -121,6 +121,32 @@ def readings_match(expected: Any, actual: Any) -> bool:
     return clean_value(expected) == clean_value(actual)
 
 
+def on_off_labels(config_entry: dict) -> tuple[str, str]:
+    """The texts this datapoint reports for on and off.
+
+    The OZW672 reports a RadioButton's value as display text in the device's
+    language - "Ein"/"Aus" on a German one - and the stored description carries
+    those texts as the button's TextOpt1/TextOpt0. Comparing with the English
+    "On" alone made every such switch on a non-English device read off, and
+    reported each switching as a write the device had ignored. Ported from the
+    original repository (johnaherninfotrack, 9051b18).
+    """
+    for button in (config_entry.get("DPDescr") or {}).get("Buttons") or []:
+        on = str(button.get("TextOpt1") or "").strip()
+        off = str(button.get("TextOpt0") or "").strip()
+        if on and off:
+            return on, off
+    return "On", "Off"
+
+
+def is_on_value(config_entry: dict, value: Any) -> bool | None:
+    """Whether a reading means on, or None when there is no reading."""
+    text = clean_value(value)
+    if text is None:
+        return None
+    return text in {on_off_labels(config_entry)[0], "On"}
+
+
 def datapoint_type(config_entry: dict, data: dict | None = None) -> str:
     """The datapoint's value type, from the stored description if possible."""
     descr = config_entry.get("DPDescr") or {}
