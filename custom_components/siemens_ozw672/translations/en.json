@@ -43,6 +43,14 @@
           "select_rest_slow": "Also take everything else on this screen at priority 3",
           "go_back": "◀ Go back to the previous step (discards what is selected here)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Siemens OZW672 - Log in again",
+        "description": "The OZW672 at {host} no longer accepts the stored username and password. Enter the current ones; the configured datapoints and entities stay as they are.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -56,7 +64,8 @@
     "abort": {
       "single_instance_allowed": "Only a single instance is allowed.",
       "reconfigure_successful": "The existing OZW672 device was updated with your new selection.",
-      "no_menu_items": "No menu items were selected, so there is nothing to configure."
+      "no_menu_items": "No menu items were selected, so there is nothing to configure.",
+      "reauth_successful": "The new credentials were accepted. The OZW672 is polled again."
     }
   },
   "options": {

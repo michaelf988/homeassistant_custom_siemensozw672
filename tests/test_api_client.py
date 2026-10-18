@@ -12,6 +12,7 @@ from custom_components.siemens_ozw672.api import (
     SiemensOzw672ApiClient,
     SiemensOzw672ApiError,
     SiemensOzw672AuthError,
+    SiemensOzw672CredentialsError,
 )
 
 OK_LOGIN = {"SessionId": "session-2", "Result": {"Success": "true"}}
@@ -108,6 +109,32 @@ async def test_persistent_session_error_raises_instead_of_recursing():
 
     # One original call, one login, one retry - and then it gives up.
     assert len(session.calls) == 3
+
+
+async def test_a_refused_login_is_reported_as_a_credentials_problem():
+    """A password changed on the device must not look like a flaky session.
+
+    It is what makes Home Assistant ask for new credentials, and retrying the
+    request with the old session first would only fail again.
+    """
+    refused = {"Result": {"Success": "false", "Error": {"Nr": "5", "Txt": "Login failed"}}}
+    session = _FakeSession(SESSION_ERROR, refused)
+    client = _client(session)
+
+    with pytest.raises(SiemensOzw672CredentialsError):
+        await client.api_wrapper("get", "http://ozw.example/api/x?SessionId=None")
+
+    assert len(session.calls) == 2
+
+
+async def test_a_session_error_after_a_good_login_is_not_a_credentials_problem():
+    """Only a refused login asks the user; a device that keeps dropping sessions does not."""
+    session = _FakeSession(SESSION_ERROR, OK_LOGIN, SESSION_ERROR)
+
+    with pytest.raises(SiemensOzw672AuthError) as raised:
+        await _client(session).api_wrapper("get", "http://ozw.example/api/x?SessionId=None")
+
+    assert not isinstance(raised.value, SiemensOzw672CredentialsError)
 
 
 async def test_session_error_recovers_after_reauthentication():

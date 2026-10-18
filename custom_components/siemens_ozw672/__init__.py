@@ -10,13 +10,13 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import SiemensOzw672ApiClient, SiemensOzw672ApiError
+from .api import SiemensOzw672ApiClient, SiemensOzw672ApiError, SiemensOzw672CredentialsError
 from .remap import DatapointVerifier, VerificationPending
 from .const import CONF_DATAPOINTS
 from .const import CONF_DEVICE
@@ -209,7 +209,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             f"Could not reach the OZW672 at {entry.data.get(CONF_HOST)}: {exception}"
         ) from exception
     if not reachable:
-        raise ConfigEntryNotReady(
+        # Not ConfigEntryNotReady: that retried forever against credentials that
+        # will never work. This puts a re-authentication prompt in front of the
+        # user instead (config_flow.async_step_reauth).
+        raise ConfigEntryAuthFailed(
             f"The OZW672 at {entry.data.get(CONF_HOST)} rejected the credentials"
         )
 
@@ -453,6 +456,10 @@ class SiemensOzw672DataUpdateCoordinator(DataUpdateCoordinator):
             return await self.api.async_get_data(self.datapoints)
         except VerificationPending as exception:
             raise UpdateFailed(f"Waiting for datapoint verification: {exception}") from exception
+        except SiemensOzw672CredentialsError as exception:
+            # The password was changed on the device while Home Assistant was
+            # running. Home Assistant stops polling and asks for new credentials.
+            raise ConfigEntryAuthFailed(str(exception)) from exception
         except SiemensOzw672ApiError as exception:
             if self.verifier is not None:
                 # Nothing at all could be read. If the device restarted in the

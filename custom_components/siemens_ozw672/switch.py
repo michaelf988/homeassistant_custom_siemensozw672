@@ -6,7 +6,7 @@ from .const import DOMAIN
 from .const import ICON_SWITCH
 from .const import SWITCH
 from .entity import SiemensOzw672Entity
-from .helpers import dp_configs_for_hatype, platform_enabled
+from .helpers import dp_configs_for_hatype, is_on_value, on_off_labels, platform_enabled
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -34,10 +34,7 @@ class SiemensOzw672BinarySwitch(SiemensOzw672Entity, SwitchEntity):
     @property
     def is_on(self):
         """Return true if the switch is on, or None when there is no reading."""
-        value = self._raw_value
-        if value is None:
-            return None
-        return value == "On"
+        return is_on_value(self.config_entry, self._raw_value)
 
     async def async_turn_on(self, **kwargs):  # pylint: disable=unused-argument
         """Turn on the switch."""
@@ -55,5 +52,7 @@ class SiemensOzw672BinarySwitch(SiemensOzw672Entity, SwitchEntity):
         _LOGGER.info(
             f'SiemensOzw672BinarySwitch - Will update ID/Opline/Name: {item}/{opline}/{name} to Value: {value}'
         )
-        # The device echoes the text, not the index that was written.
-        await self.async_write_value(value, expected="On" if value == "1" else "Off")
+        # The device echoes the text, in its own language, not the index that
+        # was written.
+        on, off = on_off_labels(self.config_entry)
+        await self.async_write_value(value, expected=on if value == "1" else off)

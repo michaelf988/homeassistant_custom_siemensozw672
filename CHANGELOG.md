@@ -27,6 +27,20 @@
   stays unavailable instead of showing another datapoint's value, a write to it is
   refused, and a repair issue lists it.
 
+- **Switches and binary sensors on a non-English OZW672 always read off.** The device
+  reports a RadioButton's value in its own language — `Ein`/`Aus` on a German one — and
+  the integration compared it with `On`. Switching was additionally reported as a write
+  the device had ignored. The on/off texts are now taken from the datapoint's own
+  description. Ported from the original repository.
+
+- **Wrong credentials are no longer retried forever.** When the OZW672 refuses the stored
+  username or password, at startup or because the password was changed on the device
+  while Home Assistant was running, Home Assistant now asks for new credentials (a
+  re-authentication prompt under Settings › Devices & services) instead of retrying
+  every few minutes. Only the credentials change; datapoints, entities and
+  history stay. A device that merely drops sessions still just logs in again. Ported in
+  spirit from the original repository.
+
 - Re-running discovery for a configured device recognised existing datapoints by Id, so
   after a renumbering it offered them again (and hid others). It now recognises them by
   menu and operating line.
