@@ -6,6 +6,8 @@ class it sits on is only reached by a *writeable* energy datapoint.
 """
 import copy
 
+import pytest
+
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -439,11 +441,15 @@ async def test_an_unreachable_device_is_not_ready(hass):
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_rejected_credentials_are_not_ready_either(hass):
-    """A login the device refuses is reported rather than treated as success."""
+async def test_rejected_credentials_ask_for_new_ones(hass):
+    """A login the device refuses starts a reauth flow instead of retrying forever.
+
+    ConfigEntryNotReady retried, every few minutes for good, against credentials
+    that were never going to work.
+    """
     from unittest.mock import AsyncMock, patch
 
-    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 
     with patch(
         "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_sessionid",
@@ -451,8 +457,34 @@ async def test_rejected_credentials_are_not_ready_either(hass):
     ):
         entry = _entry(hass)
         await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
-    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [flow["context"]["source"] for flow in flows] == [SOURCE_REAUTH]
+
+
+async def test_a_password_changed_while_running_asks_for_new_credentials(hass):
+    """The poll stops and a reauth flow starts rather than failing every interval."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.config_entries import SOURCE_REAUTH
+
+    from custom_components.siemens_ozw672.api import SiemensOzw672CredentialsError
+
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id].coordinators[PRIORITY_FAST]
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, side_effect=SiemensOzw672CredentialsError("rejected"),
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [flow["context"]["source"] for flow in flows] == [SOURCE_REAUTH]
 
 
 async def test_entities_are_classified_without_a_poll(hass):
@@ -625,3 +657,61 @@ async def test_a_failed_readback_does_not_fail_the_write(hass):
             "switch", "turn_off", {"entity_id": entity_id}, blocking=True
         )
         await hass.async_block_till_done()
+
+
+GERMAN_BUTTONS = [{"TextOpt0": "Aus", "TextOpt1": "Ein", "Significance": "1", "IsActive": "true"}]
+
+
+def _german(hatype):
+    """A RadioButton datapoint on a device set to German."""
+    return {
+        **_dp("1438", "3514", "Trinkwasserbetrieb", "RadioButton", hatype),
+        "DPDescr": {"Type": "RadioButton", "HAType": hatype, "Buttons": GERMAN_BUTTONS},
+    }
+
+
+def _reading(value):
+    return {"1438": {"Data": {"Type": "RadioButton", "Value": value, "Unit": ""}}}
+
+
+@pytest.mark.parametrize(("domain", "hatype"), [("switch", "switch"), ("binary_sensor", "binarysensor")])
+@pytest.mark.parametrize(("value", "expected"), [("Ein", "on"), ("Aus", "off"), ("On", "on")])
+async def test_on_and_off_are_read_in_the_device_language(hass, domain, hatype, value, expected):
+    """A German OZW672 reports "Ein"/"Aus"; comparing with "On" made it always off."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, return_value=_reading(value),
+    ):
+        await _setup(hass, datapoints=[_german(hatype)])
+
+    assert _state(hass, domain, DHW_MODE).state == expected
+
+
+async def test_switching_a_german_switch_is_not_reported_as_ignored(hass, caplog):
+    """The read-back says "Ein", which is what turning it on should produce."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, return_value=_reading("Aus"),
+    ):
+        await _setup(hass, datapoints=[_german("switch")])
+    entity_id = _entity_id(hass, "switch", DHW_MODE)
+
+    with patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_write_data",
+        new_callable=AsyncMock,
+    ) as write, patch(
+        "custom_components.siemens_ozw672.api.SiemensOzw672ApiClient.async_get_data",
+        new_callable=AsyncMock, return_value=_reading("Ein"),
+    ):
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": entity_id}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    assert write.await_args.args[1] == "1"
+    assert hass.states.get(entity_id).state == "on"
+    assert "ignores some writes" not in caplog.text

@@ -455,6 +455,43 @@ class SiemensOzw672FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             title=dev_title, data=self._data, options=self._options
         )
 
+    async def async_step_reauth(self, entry_data):
+        """The OZW672 rejected the stored credentials (ConfigEntryAuthFailed)."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Ask for the new username and password, check them, and reload.
+
+        Only the credentials change. The entry, and with it every entity, its
+        unique id and its history, stays as it is.
+        """
+        entry = self._get_reauth_entry()
+        errors = {}
+        if user_input is not None:
+            valid = await self._test_credentials(
+                entry.data[CONF_HOST], entry.data[CONF_PROTOCOL],
+                user_input[CONF_USERNAME], user_input[CONF_PASSWORD],
+                DEFAULT_HTTPTIMEOUT, DEFAULT_HTTPRETRIES,
+            )
+            if valid:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={
+                        CONF_USERNAME: user_input[CONF_USERNAME],
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    },
+                )
+            errors["base"] = "auth"
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({
+                vol.Required(CONF_USERNAME, default=entry.data.get(CONF_USERNAME, "")): str,
+                vol.Required(CONF_PASSWORD): str,
+            }),
+            description_placeholders={"host": str(entry.data.get(CONF_HOST, ""))},
+            errors=errors,
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):

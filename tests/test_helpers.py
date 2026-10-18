@@ -28,6 +28,8 @@ from custom_components.siemens_ozw672.helpers import (
     parse_time,
     clean_value,
     datapoint_identifier,
+    is_on_value,
+    on_off_labels,
     decimal_digits,
     descr_float,
     device_model,
@@ -96,6 +98,27 @@ def test_descr_float_falls_back():
     assert descr_float({"DPDescr": {"Min": "-50.0"}}, "Min", 0.0) == -50.0
     assert descr_float({"DPDescr": {}}, "Max", 100.0) == 100.0
     assert descr_float({"DPDescr": {"Resolution": "not a number"}}, "Resolution", 1.0) == 1.0
+
+
+def test_on_off_labels_come_from_the_description():
+    """The device reports RadioButtons in its own language."""
+    german = {"DPDescr": {"Buttons": [{"TextOpt0": " Aus ", "TextOpt1": " Ein "}]}}
+
+    assert on_off_labels(german) == ("Ein", "Aus")
+    # Without buttons - an Enumeration, or a read-only datapoint whose full
+    # description was never fetched - the English texts are all there is.
+    assert on_off_labels({"DPDescr": {"Type": "Enumeration"}}) == ("On", "Off")
+    assert on_off_labels({}) == ("On", "Off")
+
+
+def test_is_on_value():
+    german = {"DPDescr": {"Buttons": [{"TextOpt0": "Aus", "TextOpt1": "Ein"}]}}
+
+    assert is_on_value(german, "  Ein") is True
+    assert is_on_value(german, "Aus") is False
+    assert is_on_value(german, "On") is True
+    assert is_on_value({}, "Off") is False
+    assert is_on_value(german, "----") is None
 
 
 def test_datapoint_identifier_prefers_opline():
