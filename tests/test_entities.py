@@ -118,7 +118,7 @@ def _entity_id(hass, domain, opline):
     ours, so that is what the tests key on.
     """
     return er.async_get(hass).async_get_entity_id(
-        domain, DOMAIN, f"{ENTRY_ID}_{opline}"
+        domain, DOMAIN, f"{ENTRY_ID}_{opline}_diagnostics"
     )
 
 
@@ -128,8 +128,8 @@ def _state(hass, domain, opline):
     return hass.states.get(entity_id) if entity_id else None
 
 
-# Operating line numbers of the fixture datapoints, which are also their unique
-# id suffixes.
+# Operating line numbers of the fixture datapoints. Together with the menu path
+# ("diagnostics") they make up the unique id suffixes.
 OUTSIDE_TEMP = "39"
 FLOW_TEMP = "44"
 ENERGY_TOTAL = "40"
@@ -243,14 +243,79 @@ async def test_entities_do_not_write_back_into_the_config_entry(hass):
         assert "device_name" not in stored
 
 
-async def test_unique_ids_use_the_operating_line(hass):
+async def test_unique_ids_use_the_operating_line_and_menu(hass):
     """Entity ids survive the OZW672 regenerating its menu tree."""
     await _setup(hass)
 
     registry = er.async_get(hass)
     entity_id = _entity_id(hass, "sensor", OUTSIDE_TEMP)
     assert entity_id is not None
-    assert registry.async_get(entity_id).unique_id == f"{ENTRY_ID}_{OUTSIDE_TEMP}"
+    assert registry.async_get(entity_id).unique_id == f"{ENTRY_ID}_{OUTSIDE_TEMP}_diagnostics"
+
+
+def _room(menu, id):
+    """The same datapoint in one room of a Synco living QAX910."""
+    return {
+        **_dp(id, "303", "Room temperature actual", "Numeric", "sensor",
+              Unit="\u00b0C", DecimalDigits="1"),
+        "MenuItem": menu,
+    }
+
+
+async def test_the_same_operating_line_in_two_rooms_gives_two_entities(hass):
+    """A QAX910 repeats its menus per room, so an operating line is not unique (#10)."""
+    await _setup(hass, datapoints=[
+        _room("Rooms->Cellar->Room state", "1960"),
+        _room("Rooms->Living room->Room state", "1961"),
+    ])
+
+    registry = er.async_get(hass)
+    unique_ids = {
+        registry.async_get(entity_id).unique_id
+        for entity_id in hass.states.async_entity_ids("sensor")
+    }
+    assert unique_ids == {
+        f"{ENTRY_ID}_303_rooms_cellar_room_state",
+        f"{ENTRY_ID}_303_rooms_living_room_room_state",
+    }
+
+
+async def test_entities_registered_under_the_old_unique_id_are_carried_over(hass):
+    """An entity from 0.11.0 or older keeps its entity_id, and so its history."""
+    entry = _entry(hass)
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{ENTRY_ID}_{OUTSIDE_TEMP}",
+        config_entry=entry, suggested_object_id="my_outside_temp",
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert _entity_id(hass, "sensor", OUTSIDE_TEMP) == old.entity_id
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_{OUTSIDE_TEMP}") is None
+
+
+async def test_a_shared_old_unique_id_goes_to_the_datapoint_that_had_it(hass):
+    """Of several rooms on one old unique id, only the first had an entity."""
+    entry = _entry(hass, datapoints=[
+        _room("Rooms->Cellar->Room state", "1960"),
+        _room("Rooms->Living room->Room state", "1961"),
+    ])
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{ENTRY_ID}_303",
+        config_entry=entry, suggested_object_id="cellar_temp",
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert registry.async_get(old.entity_id).unique_id == f"{ENTRY_ID}_303_rooms_cellar_room_state"
+    living = registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{ENTRY_ID}_303_rooms_living_room_room_state"
+    )
+    assert living is not None and living != old.entity_id
 
 
 async def test_one_coordinator_per_populated_tier(hass):

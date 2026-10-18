@@ -39,6 +39,15 @@ SELECT = "select"
 NUMBER = "number"
 TIME = "time"
 PLATFORMS = [SWITCH, SELECT, NUMBER, TIME, BINARY_SENSOR, SENSOR]
+# The HAType api.py stores in a datapoint description, and the platform claiming it.
+HATYPE_DOMAINS = {
+    "switch": SWITCH,
+    "select": SELECT,
+    "number": NUMBER,
+    "time": TIME,
+    "binarysensor": BINARY_SENSOR,
+    "sensor": SENSOR,
+}
 
 
 # Configuration and options

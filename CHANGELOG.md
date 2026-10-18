@@ -31,6 +31,18 @@
   after a renumbering it offered them again (and hid others). It now recognises them by
   menu and operating line.
 
+- **The same datapoint in several rooms of a Synco living QAX910 became only one entity**
+  ([#10](https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues/10)).
+  The unique id was the entry plus the operating line, and a QAX910 repeats the same menus
+  once per room, so "303 Room temperature actual" exists in every room. Home Assistant
+  kept the first and rejected the rest with `does not generate unique IDs`.
+
+  The unique id now carries the menu path as well. It is deliberately not the
+  datapoint's API Id, which would be unique too but changes whenever the OZW672
+  renumbers its menu tree. Existing entities are moved to the new unique id on the next
+  start, so entity ids, dashboards, automations and history stay as they are. The rooms
+  that were rejected before appear as new entities.
+
 ## 0.10.1
 
 ### Fixed
