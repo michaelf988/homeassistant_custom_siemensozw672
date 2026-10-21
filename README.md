@@ -1,7 +1,8 @@
 # Siemens OZW672 Integration for Home Assistant
 
-A Home Assistant integration for the Siemens OZW672 web server, which exposes LPB/BSB
-heating plants (RVS controllers and their extension modules) over a local HTTP API.
+A Home Assistant integration for the Siemens OZW672 and OZW772 web servers, which expose
+LPB/BSB heating plants over a local HTTP API — RVS controllers and their extension
+modules, and Synco living room controllers.
 
 > **This is a fork.** The original integration is
 > [johnaherninfotrack/homeassistant_custom_siemensozw672](https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672)
@@ -14,8 +15,21 @@ heating plants (RVS controllers and their extension modules) over a local HTTP A
 ## Overview
 
 The OZW672 is a web server platform for remote monitoring of Siemens LPB/BSB plants. The
-original integration was built and tested against an OZW672.01 running firmware v11.0,
-monitoring an RVS43.345/109 with three AVS73.390/109 extension modules.
+OZW772 serves the same Web API, so this integration works with it unchanged — the name of
+this project is historical, not a limitation.
+
+### Tested hardware
+
+| Web server | Monitored device | Reported by |
+| --- | --- | --- |
+| OZW672.01, firmware v11.0 | RVS43.345/109 with three AVS73.390/109 extension modules | the original integration |
+| OZW772.04, firmware 6.0 (build 06.00.14.25), hardware 3.00 | Synco living QAX910 with nine rooms | [#10](https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues/10) |
+
+Other LPB/BSB devices behind either web server should work: the integration discovers
+whatever the web server's menu tree offers rather than knowing any particular controller.
+If you run something not listed here, a note in the
+[issue tracker](https://github.com/michaelf988/homeassistant_custom_siemensozw672/issues)
+is welcome — it is the only way this table grows.
 
 You can also **write** values back to the OZW672, with four caveats:
 

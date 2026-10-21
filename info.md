@@ -1,5 +1,7 @@
-A Home Assistant integration for the Siemens OZW672 web server, which exposes LPB/BSB
-heating plants (RVS controllers and their extension modules) over a local HTTP API.
+A Home Assistant integration for the Siemens OZW672 and OZW772 web servers, which expose
+LPB/BSB heating plants over a local HTTP API — RVS controllers and their extension
+modules, and Synco living room controllers. The OZW772 serves the same Web API, so the
+name of this project is historical, not a limitation.
 
 This is a fork of
 [johnaherninfotrack/homeassistant_custom_siemensozw672](https://github.com/johnaherninfotrack/homeassistant_custom_siemensozw672),
